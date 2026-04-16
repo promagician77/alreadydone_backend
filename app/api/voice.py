@@ -124,5 +124,9 @@ async def speak(request: SpeakRequest):
             status_code=404 if not rows else 400,
             detail="Story not found or has no story text",
         )
-    return {"url": result["url"], "content_type": result["content_type"]}
+    return {
+        "url": result["url"],
+        "content_type": result["content_type"],
+        "play_length": result.get("play_length"),
+    }
     # return {"format_text": result["format_text"], "text_with_breaks": result["text_with_breaks"]}

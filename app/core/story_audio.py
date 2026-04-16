@@ -261,5 +261,9 @@ async def generate_and_store_story_audio(
         except Exception as e:
             logging.exception("Supabase storage upload failed for story %s: %s", story_id, e)
 
-    return {"url": public_url, "content_type": content_type}
+    return {
+        "url": public_url,
+        "content_type": content_type,
+        "play_length": play_length,
+    }
     # return {"format_text": formatted_text, "text_with_breaks": text_with_breaks}
