@@ -151,7 +151,7 @@ async def generate_story_content(body: GenerateStoryRequest):
     try:
         user_row = (
             supabase.table("Users")
-            .select("id, rc_subscription_status, rc_subscription_Status")
+            .select("id, rc_subscription_status")
             .eq("id", user_id)
             .execute()
         )
@@ -162,8 +162,7 @@ async def generate_story_content(body: GenerateStoryRequest):
             "[stories.generate] subscription user_id=%s is_subscribed=%s rc_status=%s",
             user_id,
             is_subscribed,
-            (user_record or {}).get("rc_subscription_status")
-            or (user_record or {}).get("rc_subscription_Status"),
+            (user_record or {}).get("rc_subscription_status"),
         )
     except Exception as e:
         logger.exception("[stories.generate] subscription lookup failed user_id=%s err=%s", user_id, e)
