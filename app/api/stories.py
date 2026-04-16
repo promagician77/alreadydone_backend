@@ -13,6 +13,8 @@ from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/stories", tags=["stories"])
 
+logger = logging.getLogger(__name__)
+
 
 class GenerateStoryRequest(BaseModel):
     user_id: int = Field(..., description="User who owns this story")
@@ -125,7 +127,15 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
-    print(body)
+    logger.info(
+        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s name_len=%s location_len=%s lovedOne_present=%s",
+        body.user_id,
+        body.energyWord,
+        body.desireCategory,
+        len((body.name or "").strip()),
+        len((body.location or "").strip()),
+        bool((body.lovedOne or "").strip()),
+    )
     # Match variable names to GenerateStoryRequest field names (self.user_id, self.name, ...)
     user_id = body.user_id
     name = body.name
@@ -138,24 +148,85 @@ async def generate_story_content(body: GenerateStoryRequest):
     supabase = get_supabase()
 
     # Non-subscribers: limit to 1 story per day (UTC). RevenueCat subscribed (rc_subscription_status = active) get unlimited.
-    user_row = supabase.table("Users").select("rc_subscription_status").eq("id", user_id).execute()
-    user_data = (user_row.data or [])
-    user_record = user_data[0] if user_data else None
-    is_subscribed = _is_user_subscribed(user_record)
+    try:
+        user_row = (
+            supabase.table("Users")
+            .select("id, rc_subscription_status, rc_subscription_Status")
+            .eq("id", user_id)
+            .execute()
+        )
+        user_data = (user_row.data or [])
+        user_record = user_data[0] if user_data else None
+        is_subscribed = _is_user_subscribed(user_record)
+        logger.info(
+            "[stories.generate] subscription user_id=%s is_subscribed=%s rc_status=%s",
+            user_id,
+            is_subscribed,
+            (user_record or {}).get("rc_subscription_status")
+            or (user_record or {}).get("rc_subscription_Status"),
+        )
+    except Exception as e:
+        logger.exception("[stories.generate] subscription lookup failed user_id=%s err=%s", user_id, e)
+        raise HTTPException(status_code=502, detail="Could not load subscription status")
     if not is_subscribed:
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
-        r_today = supabase.table("Stories").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_start).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        count_today = getattr(r_today, "count", None)
-        if count_today is None:
-            count_today = len(r_today.data or []) if r_today.data is not None else 0
-        if (count_today or 0) >= 1:
-            raise HTTPException(
-                status_code=403,
-                detail="Free users can generate up to 1 story per day. Subscribe for unlimited stories.",
+        try:
+            r_today = (
+                supabase.table("Stories")
+                .select("id", count="exact")
+                .eq("user_id", user_id)
+                .gte("created_at", today_start)
+                .or_("is_deleted.eq.false,is_deleted.is.null")
+                .execute()
             )
+            count_today = getattr(r_today, "count", None)
+            if count_today is None:
+                count_today = len(r_today.data or []) if r_today.data is not None else 0
+            logger.info(
+                "[stories.generate] free_limit user_id=%s today_start=%s count_today=%s",
+                user_id,
+                today_start,
+                count_today,
+            )
+            if (count_today or 0) >= 1:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Free users can generate up to 1 story per day. Subscribe for unlimited stories.",
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception("[stories.generate] free_limit query failed user_id=%s err=%s", user_id, e)
+            raise HTTPException(status_code=502, detail="Could not validate daily limit")
 
-    desire_id = _get_desire_id_by_name(supabase, desireCategory)
-    r = supabase.table("Stories").select("id", "theme", count="exact").eq("user_id", user_id).eq("desire_id", desire_id).or_("is_deleted.eq.false,is_deleted.is.null").order("id").execute()
+    try:
+        desire_id = _get_desire_id_by_name(supabase, desireCategory)
+        logger.info(
+            "[stories.generate] desire resolved user_id=%s desireCategory=%s desire_id=%s",
+            user_id,
+            desireCategory,
+            desire_id,
+        )
+    except HTTPException:
+        logger.exception(
+            "[stories.generate] desire lookup failed user_id=%s desireCategory=%s",
+            user_id,
+            desireCategory,
+        )
+        raise
+    except Exception as e:
+        logger.exception("[stories.generate] desire lookup crashed user_id=%s err=%s", user_id, e)
+        raise HTTPException(status_code=502, detail="Could not resolve desire category")
+
+    r = (
+        supabase.table("Stories")
+        .select("id", "theme", count="exact")
+        .eq("user_id", user_id)
+        .eq("desire_id", desire_id)
+        .or_("is_deleted.eq.false,is_deleted.is.null")
+        .order("id")
+        .execute()
+    )
     rows = list(r.data or [])
     existing_count = r.count if getattr(r, "count", None) is not None else len(rows)
     story_count = existing_count + 1
@@ -164,6 +235,14 @@ async def generate_story_content(body: GenerateStoryRequest):
         for s in rows
         if (s.get("theme") or "").strip()
     ]
+    logger.info(
+        "[stories.generate] prior stories user_id=%s desire_id=%s existing_count=%s story_count=%s prev_theme_count=%s",
+        user_id,
+        desire_id,
+        existing_count,
+        story_count,
+        len(previous_story_themes),
+    )
     try:
         theme, story = await generate_story(
             name=name,
@@ -175,14 +254,23 @@ async def generate_story_content(body: GenerateStoryRequest):
             storyCount=story_count,
             previousStoryThemes=previous_story_themes,
         )
+        logger.info(
+            "[stories.generate] claude ok user_id=%s theme_len=%s story_len=%s",
+            user_id,
+            len((theme or "").strip()),
+            len((story or "").strip()),
+        )
     except ValueError as e:
         if "ANTHROPIC_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="Story generation is not configured")
+        logger.exception("[stories.generate] claude value error user_id=%s err=%s", user_id, e)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("[stories.generate] claude failed user_id=%s err=%s", user_id, e)
         raise HTTPException(status_code=502, detail=f"Story generation failed: {e!s}")
 
     try:
+        logger.info("[stories.generate] inserting story user_id=%s desire_id=%s", user_id, desire_id)
         r = supabase.table("Stories").insert({
             "theme": theme,
             "user_id": user_id,
@@ -190,16 +278,17 @@ async def generate_story_content(body: GenerateStoryRequest):
             "story": story,
         }).execute()
     except Exception as e:
+        logger.exception("[stories.generate] supabase insert failed user_id=%s err=%s", user_id, e)
         raise HTTPException(status_code=502, detail=f"Failed to store story: {e!s}")
 
     rows = list(r.data or [])
     created = rows[0] if rows else {}
+    logger.info("[stories.generate] done user_id=%s story_id=%s", user_id, created.get("id"))
     return {
         "id": created.get("id"),
         "theme": theme,
         "story": story,
     }
-
 
 @router.post("/deepen")
 async def deepen_story(body: DeepenStoryRequest):
