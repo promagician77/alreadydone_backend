@@ -1,0 +1,34 @@
+[Unit]
+Description=ALREADY API backend (FastAPI + uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Project root (change to your deploy path, e.g. /var/www/alreadyapp-backend)
+WorkingDirectory=/root/alreadyapp-backend
+
+# Use venv Python/uvicorn (recommended). Create venv: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+ExecStart=/root/alreadyapp-backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Or use system Python (uncomment and comment ExecStart above if you prefer):
+# ExecStart=/usr/bin/python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Load .env from WorkingDirectory
+EnvironmentFile=-/root/alreadyapp-backend/.env
+
+# Single log file for all stdout and stderr (create the directory: mkdir -p /root/alreadyapp-backend/logs)
+StandardOutput=append:/root/alreadyapp-backend/logs/app.log
+StandardError=append:/root/alreadyapp-backend/logs/app.log
+
+Restart=always
+RestartSec=3
+
+# Security / resource limits
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
