@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     SUPABASE_STORAGE_BUCKET: str = "Record-Stories"
     # Claude API
     ANTHROPIC_API_KEY: str = ""
-    CLAUDE_STORY_MODEL: str = "claude-sonnet-4-20250514"
+    CLAUDE_STORY_MODEL: str = "claude-sonnet-4-6"
     CLAUDE_STORY_MAX_TOKENS: int = 900  # enough for 2600 chars + theme
 
     # Stripe (subscription paywall: 7-day trial, monthly and annual plans)
