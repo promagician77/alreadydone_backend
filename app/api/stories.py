@@ -14,7 +14,6 @@ from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/stories", tags=["stories"])
 
-
 class GenerateStoryRequest(BaseModel):
     user_id: int = Field(..., description="User who owns this story")
     name: str = Field(..., min_length=1, description="User's first name")
@@ -126,7 +125,12 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
-    print(body)
+    logging.info(
+        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s",
+        body.user_id,
+        body.energyWord,
+        body.desireCategory,
+    )
     # Match variable names to GenerateStoryRequest field names (self.user_id, self.name, ...)
     user_id = body.user_id
     name = body.name
@@ -216,8 +220,6 @@ async def generate_story_content(body: GenerateStoryRequest):
         "theme": theme,
         "story": story,
     }
-
-
 @router.post("/deepen")
 async def deepen_story(body: DeepenStoryRequest):
     """Generate a deepening continuation of an existing story. Requires Stories.parent_story_id and Stories.deepening_level columns."""
