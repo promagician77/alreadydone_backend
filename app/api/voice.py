@@ -29,6 +29,10 @@ VOICE_CLONE_UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.d
 async def clone_voice(
     user_id: int = Form(...),
     name: str = Form(...),
+    remove_background_noise: bool = Form(
+        True,
+        description="If true, ask ElevenLabs to reduce background noise in the training audio.",
+    ),
     files: list[UploadFile] = File(...),
 ):
     """Create a voice clone from uploaded audio; returns ElevenLabs voice_id."""
@@ -62,7 +66,12 @@ async def clone_voice(
             logging.warning("Could not save clone audio to %s: %s", save_path, e)
 
     try:
-        return await add_voice(name=name, files=file_tuples, user_id=user_id, remove_background_noise= 'false')
+        return await add_voice(
+            name=name,
+            files=file_tuples,
+            user_id=user_id,
+            remove_background_noise=remove_background_noise,
+        )
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
         _raise_http_from_httpx(e)
 

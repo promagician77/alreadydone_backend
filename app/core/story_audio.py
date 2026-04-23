@@ -4,6 +4,8 @@ import io
 import logging
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -21,6 +23,26 @@ MAX_SENTENCE_WORDS = 20
 SENTENCES_PER_PARAGRAPH = (3, 4)
 
 
+def _strip_sfx_cues(text: str) -> str:
+    """
+    Remove common non-speech / SFX cues that can slip into story text and get rendered as audio.
+    Keep this conservative: only remove when clearly marked as a cue (brackets/parentheses/asterisks).
+    """
+    if not text:
+        return text
+
+    s = text
+    # Examples: (cat meow), [meow], *meow*, (background noise), [SFX: ...]
+    cue_words = r"(?:sfx|sound\s*effect|background\s*noise|ambient\s*noise|ambient|meow|cat\s*meow)"
+    s = re.sub(rf"\(\s*{cue_words}\s*\)", "", s, flags=re.I)
+    s = re.sub(rf"\[\s*{cue_words}\s*\]", "", s, flags=re.I)
+    s = re.sub(rf"\*\s*{cue_words}\s*\*", "", s, flags=re.I)
+    # Generic labeled cues: [SFX: ...], (SFX: ...), [ambient: ...]
+    s = re.sub(r"\[\s*(sfx|ambient|background)\s*:\s*[^]\n]{0,80}\]", "", s, flags=re.I)
+    s = re.sub(r"\(\s*(sfx|ambient|background)\s*:\s*[^\)\n]{0,80}\)", "", s, flags=re.I)
+    return s
+
+
 def _format_text_for_tts(text: str) -> str:
     """
     Prepare story text for natural-sounding TTS:
@@ -32,7 +54,7 @@ def _format_text_for_tts(text: str) -> str:
     if not text or not text.strip():
         return text
 
-    s = text.strip()
+    s = _strip_sfx_cues(text).strip()
 
     # Strip any SSML / break tags (including escaped-quote variants from old runs)
     s = re.sub(r"<\s*break\b[^>]*?/?\s*>", "", s)
@@ -163,6 +185,57 @@ def _add_breaks_to_paragraph(paragraph: str, *, add_trailing_paragraph_break: bo
     return f"<speak>{result}{tail}</speak>"
 
 
+def _concat_mp3_chunks(chunks: list[bytes]) -> bytes:
+    if not chunks:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        # Fallback: keep old behavior (may stop early in some players).
+        return b"".join(chunks)
+
+    with tempfile.TemporaryDirectory() as td:
+        inputs: list[str] = []
+        for i, b in enumerate(chunks):
+            p = os.path.join(td, f"in_{i:04d}.mp3")
+            with open(p, "wb") as f:
+                f.write(b)
+            inputs.append(p)
+
+        list_path = os.path.join(td, "concat.txt")
+        with open(list_path, "w", encoding="utf-8") as f:
+            for p in inputs:
+                # ffmpeg concat demuxer format
+                f.write(f"file '{p}'\n")
+
+        out_path = os.path.join(td, "out.mp3")
+        # -c copy avoids re-encoding; produces a single stream with correct container metadata.
+        cmd = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_path,
+            "-c",
+            "copy",
+            out_path,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            with open(out_path, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logging.warning("ffmpeg concat failed; falling back to byte-join: %s", e)
+            return b"".join(chunks)
+
+
 async def generate_and_store_story_audio(
     *,
     story_id: int,
@@ -229,7 +302,7 @@ async def generate_and_store_story_audio(
             except Exception as e:
                 logging.warning("Could not get chunk %d duration: %s", idx + 1, e)
 
-    audio_bytes = b"".join(audio_chunks)
+    audio_bytes = _concat_mp3_chunks(audio_chunks)
     play_length = round(total_duration, 2) if total_duration > 0 else None
 
     public_url = None
