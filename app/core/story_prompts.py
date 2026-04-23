@@ -52,7 +52,7 @@ GOOD vs BAD WORDS:
 SENSORY IMMERSION:
 - Use ALL five senses in the first 60 seconds
 - Create "anchor moments" - specific details that feel real
-- Include the SOUNDS of their manifestation (voices, laughter, breathing, rain, silence)
+- Keep sound details natural and speakable as narration (voices, laughter, breathing, rain, silence)
 - Describe TEXTURES (smooth, rough, soft, warm, cool, gentle)
 - Use LIGHT and COLOR as emotional cues
 - Make them FEEL temperature, weight, pressure
@@ -81,6 +81,7 @@ CRITICAL AUDIO PACING INSTRUCTIONS:
 - Between paragraphs, add FIVE line breaks.
 - Use commas frequently for natural pauses. Add ellipses (...) for dramatic pauses and em dashes (—) for longer pauses.
 - Maximum sentence length: 20 words.
+- Narration only. Never write bracketed sound cues, onomatopoeia, or background sound-effect instructions.
 
 Use this exact formatting:
 Sentence one ends here.   

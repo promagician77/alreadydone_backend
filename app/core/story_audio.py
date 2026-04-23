@@ -1,17 +1,22 @@
 """Generate TTS for a story and store in Supabase. Used by voice API and by deepen flow."""
 
+from __future__ import annotations
+
 import io
+import json
 import logging
 import os
 import re
-import shutil
-import subprocess
 import tempfile
+import time
 import uuid
+import wave
 from datetime import datetime, timezone
 
 from app.core.config import settings
-from app.core.elevenlabs import text_to_speech
+from app.core.db_utils import safe_partial_update
+from app.core.elevenlabs import default_voice_settings, text_to_speech
+from app.core.story_text import ensure_complete_story_text, prepare_story_for_narration
 from app.core.supabase_client import get_supabase
 
 try:
@@ -21,26 +26,6 @@ except ImportError:
 
 MAX_SENTENCE_WORDS = 20
 SENTENCES_PER_PARAGRAPH = (3, 4)
-
-
-def _strip_sfx_cues(text: str) -> str:
-    """
-    Remove common non-speech / SFX cues that can slip into story text and get rendered as audio.
-    Keep this conservative: only remove when clearly marked as a cue (brackets/parentheses/asterisks).
-    """
-    if not text:
-        return text
-
-    s = text
-    # Examples: (cat meow), [meow], *meow*, (background noise), [SFX: ...]
-    cue_words = r"(?:sfx|sound\s*effect|background\s*noise|ambient\s*noise|ambient|meow|cat\s*meow)"
-    s = re.sub(rf"\(\s*{cue_words}\s*\)", "", s, flags=re.I)
-    s = re.sub(rf"\[\s*{cue_words}\s*\]", "", s, flags=re.I)
-    s = re.sub(rf"\*\s*{cue_words}\s*\*", "", s, flags=re.I)
-    # Generic labeled cues: [SFX: ...], (SFX: ...), [ambient: ...]
-    s = re.sub(r"\[\s*(sfx|ambient|background)\s*:\s*[^]\n]{0,80}\]", "", s, flags=re.I)
-    s = re.sub(r"\(\s*(sfx|ambient|background)\s*:\s*[^\)\n]{0,80}\)", "", s, flags=re.I)
-    return s
 
 
 def _format_text_for_tts(text: str) -> str:
@@ -54,7 +39,7 @@ def _format_text_for_tts(text: str) -> str:
     if not text or not text.strip():
         return text
 
-    s = _strip_sfx_cues(text).strip()
+    s = text.strip()
 
     # Strip any SSML / break tags (including escaped-quote variants from old runs)
     s = re.sub(r"<\s*break\b[^>]*?/?\s*>", "", s)
@@ -67,8 +52,8 @@ def _format_text_for_tts(text: str) -> str:
     # Normalize em dash spacing
     s = re.sub(r"\s*—\s*", " — ", s)
     # Normalize ellipses and protect them from sentence splitting
-    ELLIPSIS_PLACEHOLDER = "\x01ELLIPSIS\x01"
-    s = re.sub(r"\.{3,}", ELLIPSIS_PLACEHOLDER, s)
+    ellipsis_placeholder = "\x01ELLIPSIS\x01"
+    s = re.sub(r"\.{3,}", ellipsis_placeholder, s)
 
     # Split into sentences
     parts = re.split(r"([.!?])\s*", s)
@@ -85,10 +70,8 @@ def _format_text_for_tts(text: str) -> str:
     if current.strip():
         sentences.append(current.strip())
 
-    # Restore ellipses
-    sentences = [sent.replace(ELLIPSIS_PLACEHOLDER, "...") for sent in sentences]
+    sentences = [sent.replace(ellipsis_placeholder, "...") for sent in sentences]
 
-    # Break long sentences at conjunctions
     conj = re.compile(r"\s+(and|but|so|or|then|yet|nor)\s+", re.I)
     result: list[str] = []
     for sent in sentences:
@@ -99,35 +82,33 @@ def _format_text_for_tts(text: str) -> str:
         while remaining.strip():
             remaining = remaining.strip()
             found = False
-            for m in conj.finditer(remaining):
-                prefix = remaining[: m.start()].strip()
+            for match in conj.finditer(remaining):
+                prefix = remaining[: match.start()].strip()
                 wc = len(prefix.split())
                 if 5 <= wc <= MAX_SENTENCE_WORDS:
-                    result.append(prefix + " " + m.group(0).strip())
-                    remaining = remaining[m.end() :].strip()
+                    result.append(prefix + " " + match.group(0).strip())
+                    remaining = remaining[match.end() :].strip()
                     found = True
                     break
             if not found:
-                wrds = remaining.split()
-                if len(wrds) <= MAX_SENTENCE_WORDS:
+                words = remaining.split()
+                if len(words) <= MAX_SENTENCE_WORDS:
                     result.append(remaining)
                     break
-                chunk = " ".join(wrds[:MAX_SENTENCE_WORDS])
-                remaining = " ".join(wrds[MAX_SENTENCE_WORDS:]).strip()
+                chunk = " ".join(words[:MAX_SENTENCE_WORDS])
+                remaining = " ".join(words[MAX_SENTENCE_WORDS:]).strip()
                 result.append(chunk)
 
-    # Insert commas after introductory words when missing
     intro = re.compile(
         r"^(Well|So|However|First|Then|Now|Yes|No|Actually|Finally|Suddenly)\s+(?!,)",
         re.I,
     )
-    for i, sent in enumerate(result):
-        m = intro.match(sent)
-        if m:
-            word = m.group(1)
-            result[i] = word + ", " + sent[m.end() :]
+    for idx, sent in enumerate(result):
+        match = intro.match(sent)
+        if match:
+            word = match.group(1)
+            result[idx] = word + ", " + sent[match.end() :]
 
-    # Ensure every sentence ends with punctuation
     final: list[str] = []
     for sent in result:
         sent = sent.strip()
@@ -135,105 +116,169 @@ def _format_text_for_tts(text: str) -> str:
             sent += "."
         final.append(sent)
 
-    # Group into paragraphs (separated by blank lines)
     paragraphs: list[str] = []
-    i = 0
-    while i < len(final):
-        left = len(final) - i
+    idx = 0
+    while idx < len(final):
+        left = len(final) - idx
         take = min(SENTENCES_PER_PARAGRAPH[1], left) if left >= SENTENCES_PER_PARAGRAPH[0] else left
         take = max(1, take)
-        paragraphs.append(" ".join(final[i : i + take]))
-        i += take
+        paragraphs.append(" ".join(final[idx : idx + take]))
+        idx += take
     return "\n\n".join(paragraphs)
 
 
-# ElevenLabs SSML pauses (max 3s per break). Reference: natural narration pacing.
-PAUSE_COMMA = '<break time="0.2s" />'  # quick breath between clauses
-PAUSE_ELLIPSIS = '<break time="0.5s" />'  # brief dramatic pause
-PAUSE_COLON = '<break time="0.2s" />'  # short clause setup pause
-PAUSE_SENTENCE = '<break time="0.7s" />'  # end of thought, listener processes
-PAUSE_PARAGRAPH = '<break time="0s" />'  # scene/topic change (ElevenLabs max)
+PAUSE_COMMA = '<break time="0.2s" />'
+PAUSE_ELLIPSIS = '<break time="0.5s" />'
+PAUSE_COLON = '<break time="0.2s" />'
+PAUSE_SENTENCE = '<break time="0.7s" />'
+PAUSE_PARAGRAPH = '<break time="0s" />'
 
 
 def _add_breaks_to_paragraph(paragraph: str, *, add_trailing_paragraph_break: bool = False) -> str:
-    """
-    Add SSML break tags per punctuation. Chunk per paragraph to limit tag count.
-    No trailing break between chunks so playback continues with 0s gap.
-    """
+    """Add SSML break tags per punctuation."""
     parts: list[str] = []
     length = len(paragraph)
-    i = 0
-    while i < length:
-        ch = paragraph[i]
-        if ch == "." and i + 2 < length and paragraph[i + 1] == "." and paragraph[i + 2] == ".":
+    idx = 0
+    while idx < length:
+        ch = paragraph[idx]
+        if ch == "." and idx + 2 < length and paragraph[idx + 1] == "." and paragraph[idx + 2] == ".":
             parts.append("...")
-            i += 3
+            idx += 3
             parts.append(f" {PAUSE_ELLIPSIS}")
             continue
         parts.append(ch)
-        nxt = paragraph[i + 1] if i + 1 < length else ""
+        nxt = paragraph[idx + 1] if idx + 1 < length else ""
         if ch in ".!?":
-            if nxt == " " or nxt == "":
+            if nxt in (" ", ""):
                 parts.append(f" {PAUSE_SENTENCE}")
         elif ch == ":" and nxt == " ":
             parts.append(f" {PAUSE_COLON}")
         elif ch == "," and nxt == " ":
             parts.append(f" {PAUSE_COMMA}")
-        i += 1
+        idx += 1
     result = "".join(parts)
     tail = f" {PAUSE_PARAGRAPH}" if add_trailing_paragraph_break else ""
     return f"<speak>{result}{tail}</speak>"
 
 
-def _concat_mp3_chunks(chunks: list[bytes]) -> bytes:
-    if not chunks:
-        return b""
-    if len(chunks) == 1:
-        return chunks[0]
+def _parse_output_format(output_format: str) -> tuple[str, int]:
+    parts = (output_format or "").split("_")
+    if len(parts) < 2:
+        raise ValueError(f"Invalid ElevenLabs output format: {output_format!r}")
+    codec = parts[0]
+    sample_rate = int(parts[1])
+    return codec, sample_rate
 
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        # Fallback: keep old behavior (may stop early in some players).
-        return b"".join(chunks)
 
-    with tempfile.TemporaryDirectory() as td:
-        inputs: list[str] = []
-        for i, b in enumerate(chunks):
-            p = os.path.join(td, f"in_{i:04d}.mp3")
-            with open(p, "wb") as f:
-                f.write(b)
-            inputs.append(p)
+def _pcm_chunks_to_wav(audio_chunks: list[bytes], sample_rate: int) -> bytes:
+    raw_audio = b"".join(audio_chunks)
+    with io.BytesIO() as buffer:
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(raw_audio)
+        return buffer.getvalue()
 
-        list_path = os.path.join(td, "concat.txt")
-        with open(list_path, "w", encoding="utf-8") as f:
-            for p in inputs:
-                # ffmpeg concat demuxer format
-                f.write(f"file '{p}'\n")
 
-        out_path = os.path.join(td, "out.mp3")
-        # -c copy avoids re-encoding; produces a single stream with correct container metadata.
-        cmd = [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            list_path,
-            "-c",
-            "copy",
-            out_path,
-        ]
+def _wav_chunks_to_wav(audio_chunks: list[bytes]) -> tuple[bytes, float]:
+    params = None
+    frames: list[bytes] = []
+    total_duration = 0.0
+    for chunk in audio_chunks:
+        with wave.open(io.BytesIO(chunk), "rb") as wav_file:
+            current_params = (
+                wav_file.getnchannels(),
+                wav_file.getsampwidth(),
+                wav_file.getframerate(),
+                wav_file.getcomptype(),
+                wav_file.getcompname(),
+            )
+            if params is None:
+                params = current_params
+            elif current_params != params:
+                raise ValueError("WAV chunks used different audio params and cannot be merged safely")
+            frame_count = wav_file.getnframes()
+            total_duration += frame_count / float(wav_file.getframerate())
+            frames.append(wav_file.readframes(frame_count))
+
+    if params is None:
+        return b"", 0.0
+
+    with io.BytesIO() as buffer:
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(params[0])
+            wav_file.setsampwidth(params[1])
+            wav_file.setframerate(params[2])
+            wav_file.setcomptype(params[3], params[4])
+            wav_file.writeframes(b"".join(frames))
+        return buffer.getvalue(), total_duration
+
+
+def _extension_for_content_type(content_type: str) -> str:
+    content_type = (content_type or "").lower()
+    if "wav" in content_type:
+        return "wav"
+    if "mpeg" in content_type or "mp3" in content_type:
+        return "mp3"
+    if "mp4" in content_type or "aac" in content_type:
+        return "m4a"
+    return "bin"
+
+
+def _estimate_duration(content_type: str, output_format: str, audio_bytes: bytes) -> float | None:
+    try:
+        codec, sample_rate = _parse_output_format(output_format)
+    except ValueError:
+        codec, sample_rate = "", 0
+
+    if codec == "pcm" and sample_rate:
+        return len(audio_bytes) / float(sample_rate * 2)
+
+    if codec == "wav":
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+            return wav_file.getnframes() / float(wav_file.getframerate())
+
+    if MutagenFile:
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            with open(out_path, "rb") as f:
-                return f.read()
-        except Exception as e:
-            logging.warning("ffmpeg concat failed; falling back to byte-join: %s", e)
-            return b"".join(chunks)
+            audio_file = MutagenFile(io.BytesIO(audio_bytes))
+            if audio_file and getattr(audio_file, "info", None):
+                return float(audio_file.info.length)
+        except Exception:
+            logging.debug("Mutagen could not estimate %s duration", content_type, exc_info=True)
+    return None
+
+
+def _write_temp_file(content: bytes, suffix: str) -> str:
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        return tmp.name
+
+
+def _upload_temp_file(*, bucket: str, path: str, tmp_path: str, content_type: str) -> str:
+    supabase = get_supabase()
+    supabase.storage.from_(bucket).upload(
+        path,
+        tmp_path,
+        file_options={"contentType": str(content_type), "upsert": "true"},
+    )
+    return supabase.storage.from_(bucket).get_public_url(path)
+
+
+def _store_manifest(*, bucket: str, manifest_path: str, manifest: dict) -> str:
+    tmp_path = _write_temp_file(json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8"), ".json")
+    try:
+        return _upload_temp_file(
+            bucket=bucket,
+            path=manifest_path,
+            tmp_path=tmp_path,
+            content_type="application/json",
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 async def generate_and_store_story_audio(
@@ -242,101 +287,231 @@ async def generate_and_store_story_audio(
     voice_id: str,
     text: str | None = None,
     model_id: str = "eleven_multilingual_v2",
+    voice_settings: dict | None = None,
+    output_format: str | None = None,
+    seed: int | None = None,
 ) -> dict | None:
     """
-    Generate TTS for a story and store in Supabase. If text is not provided, load from Stories by story_id.
-    Generates audio per paragraph to keep SSML break count low (avoids speed-up
-    artifact), then concatenates the MP3 chunks. Uses previous_text/next_text
-    for natural voice continuity between paragraphs.
-    Returns {"url": ..., "content_type": ...} or None if story not found / no text / upload skipped.
+    Generate TTS for a story and store it in Supabase.
+
+    The default flow requests PCM from ElevenLabs, concatenates raw frames safely,
+    and wraps the final result into a single WAV file to avoid MP3 stitch artifacts.
     """
-    logging.info("Generate the voice")
+    logging.info("Generate story audio for story_id=%s voice_id=%s", story_id, voice_id)
     if not text or not text.strip():
         supabase = get_supabase()
-        r = supabase.table("Stories").select("story").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        rows = r.data or []
+        response = supabase.table("Stories").select("story").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
+        rows = response.data or []
         row = rows[0] if rows else {}
         text = (row.get("story") or row.get("Story") or "").strip()
     if not text:
         return None
 
-    formatted_text = _format_text_for_tts(text)
+    narration_script = prepare_story_for_narration(text)
+    narration_script, story_meta = ensure_complete_story_text(narration_script)
+    formatted_text = _format_text_for_tts(narration_script)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", formatted_text) if p.strip()]
+    if not paragraphs:
+        return None
+
+    selected_output_format = output_format or settings.ELEVENLABS_TTS_OUTPUT_FORMAT
+    request_voice_settings = default_voice_settings()
+    if voice_settings:
+        request_voice_settings.update({k: v for k, v in voice_settings.items() if v is not None})
+    request_speed = request_voice_settings.get("speed")
+    request_voice_settings = {k: v for k, v in request_voice_settings.items() if v is not None}
+
+    try:
+        safe_partial_update(
+            table_name="Stories",
+            id_field="id",
+            record_id=story_id,
+            optional_payload={
+                "audio_generation_status": "started",
+                "audio_generation_error": None,
+                "audio_script": narration_script,
+                "audio_chunk_count": len(paragraphs),
+                "audio_model_id": model_id,
+                "audio_output_format": selected_output_format,
+                "audio_voice_settings": request_voice_settings,
+            },
+        )
+    except Exception:
+        logging.exception("Failed to persist initial audio metadata for story %s", story_id)
+
     logging.debug("[TTS] formatted text (full):\n%s", formatted_text)
     logging.debug("[TTS] total chunks: %d", len(paragraphs))
+
     audio_chunks: list[bytes] = []
-    content_type = "audio/mpeg"
+    chunk_traces: list[dict] = []
+    request_ids: list[str] = []
+    continuity_request_ids: list[str] = []
     total_duration = 0.0
+    final_content_type = "application/octet-stream"
 
-    for idx, para in enumerate(paragraphs):
-        # No trailing break between chunks so playback continues with 0s gap
-        ssml_chunk = _add_breaks_to_paragraph(para, add_trailing_paragraph_break=False)
-        prev_text = paragraphs[idx - 1] if idx > 0 else None
-        next_text = paragraphs[idx + 1] if idx < len(paragraphs) - 1 else None
+    try:
+        for idx, paragraph in enumerate(paragraphs):
+            ssml_chunk = _add_breaks_to_paragraph(paragraph, add_trailing_paragraph_break=False)
+            prev_text = paragraphs[idx - 1] if idx > 0 else None
+            next_text = paragraphs[idx + 1] if idx < len(paragraphs) - 1 else None
+            started_at = time.perf_counter()
+            result = await text_to_speech(
+                voice_id=voice_id,
+                text=ssml_chunk,
+                model_id=model_id,
+                output_format=selected_output_format,
+                voice_settings=request_voice_settings,
+                enable_ssml=True,
+                previous_text=prev_text,
+                next_text=next_text,
+                previous_request_ids=continuity_request_ids[-3:] or None,
+                speed=request_speed,
+                seed=seed,
+            )
+            latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            request_id = result.request_id or f"chunk-{idx + 1}"
+            request_ids.append(request_id)
+            if result.request_id:
+                continuity_request_ids.append(result.request_id)
+            audio_chunks.append(result.audio_bytes)
+            final_content_type = result.content_type
 
-        logging.debug("[TTS] chunk %d/%d paragraph:\n%s", idx + 1, len(paragraphs), para)
-        logging.debug(
-            "[TTS] chunk %d/%d SSML (len=%d):\n%s",
-            idx + 1,
-            len(paragraphs),
-            len(ssml_chunk),
-            ssml_chunk,
-        )
+            duration = _estimate_duration(result.content_type, result.output_format, result.audio_bytes)
+            if duration is not None:
+                total_duration += duration
 
-        chunk_bytes, ct = await text_to_speech(
-            voice_id=voice_id,
-            text=ssml_chunk,
-            model_id=model_id,
-            enable_ssml=True,
-            previous_text=prev_text,
-            next_text=next_text,
-        )
-        audio_chunks.append(chunk_bytes)
-        content_type = ct
+            chunk_traces.append(
+                {
+                    "index": idx + 1,
+                    "request_id": result.request_id,
+                    "history_item_id": result.history_item_id,
+                    "chars": len(paragraph),
+                    "ssml_chars": len(ssml_chunk),
+                    "response_bytes": len(result.audio_bytes),
+                    "latency_ms": latency_ms,
+                    "duration_seconds": round(duration, 3) if duration is not None else None,
+                    "output_format": result.output_format,
+                }
+            )
+    except Exception as exc:
+        try:
+            safe_partial_update(
+                table_name="Stories",
+                id_field="id",
+                record_id=story_id,
+                optional_payload={
+                    "audio_generation_status": "failed",
+                    "audio_generation_error": str(exc),
+                    "audio_script": narration_script,
+                },
+            )
+        except Exception:
+            logging.exception("Failed to persist audio failure metadata for story %s", story_id)
+        raise
 
-        if MutagenFile:
-            try:
-                af = MutagenFile(io.BytesIO(chunk_bytes))
-                if af and hasattr(af, "info") and af.info:
-                    total_duration += af.info.length
-            except Exception as e:
-                logging.warning("Could not get chunk %d duration: %s", idx + 1, e)
+    codec, sample_rate = _parse_output_format(selected_output_format)
+    if codec == "pcm":
+        audio_bytes = _pcm_chunks_to_wav(audio_chunks, sample_rate)
+        final_content_type = "audio/wav"
+        file_ext = "wav"
+    elif codec == "wav":
+        audio_bytes, wav_duration = _wav_chunks_to_wav(audio_chunks)
+        final_content_type = "audio/wav"
+        total_duration = total_duration or wav_duration
+        file_ext = "wav"
+    else:
+        audio_bytes = b"".join(audio_chunks)
+        file_ext = _extension_for_content_type(final_content_type)
 
-    audio_bytes = _concat_mp3_chunks(audio_chunks)
     play_length = round(total_duration, 2) if total_duration > 0 else None
 
+    manifest = {
+        "story_id": story_id,
+        "voice_id": voice_id,
+        "model_id": model_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "script": narration_script,
+        "formatted_text": formatted_text,
+        "story_text_checks": story_meta,
+        "voice_settings": request_voice_settings,
+        "output_format": selected_output_format,
+        "chunk_count": len(paragraphs),
+        "chunk_traces": chunk_traces,
+        "request_ids": [rid for rid in request_ids if rid and not rid.startswith("chunk-")],
+        "play_length": play_length,
+        "content_type": final_content_type,
+    }
+
     public_url = None
+    manifest_url = None
+    storage_path = None
+    manifest_path = None
     if settings.SUPABASE_URL and settings.SUPABASE_KEY:
         bucket = settings.SUPABASE_STORAGE_BUCKET
-        ext = "mp3" if "mpeg" in content_type or "mp3" in content_type else "mp4"
-        path = f"{voice_id}/{uuid.uuid4().hex}.{ext}"
         now_iso = datetime.now(timezone.utc).isoformat()
+        storage_path = f"{voice_id}/{uuid.uuid4().hex}.{file_ext}"
+        manifest_path = f"{voice_id}/{uuid.uuid4().hex}.json"
+        tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
+            tmp_path = _write_temp_file(audio_bytes, f".{file_ext}")
+            public_url = _upload_temp_file(
+                bucket=bucket,
+                path=storage_path,
+                tmp_path=tmp_path,
+                content_type=final_content_type,
+            )
+            manifest_url = _store_manifest(bucket=bucket, manifest_path=manifest_path, manifest=manifest)
+            base_payload = {
+                "storage": storage_path,
+                "playUrl": public_url,
+                "last_played": now_iso,
+                "voice_id": voice_id,
+            }
+            if play_length is not None:
+                base_payload["play_length"] = play_length
+            safe_partial_update(
+                table_name="Stories",
+                id_field="id",
+                record_id=story_id,
+                base_payload=base_payload,
+                optional_payload={
+                    "audio_generation_status": "completed",
+                    "audio_generation_error": None,
+                    "audio_script": narration_script,
+                    "audio_chunk_count": len(paragraphs),
+                    "audio_model_id": model_id,
+                    "audio_output_format": selected_output_format,
+                    "audio_voice_settings": request_voice_settings,
+                    "audio_manifest_path": manifest_path,
+                    "audio_manifest_url": manifest_url,
+                },
+            )
+        except Exception as exc:
+            logging.exception("Supabase storage upload failed for story %s: %s", story_id, exc)
             try:
-                supabase.storage.from_(bucket).upload(
-                    path,
-                    tmp_path,
-                    file_options={"contentType": str(content_type), "upsert": "true"},
+                safe_partial_update(
+                    table_name="Stories",
+                    id_field="id",
+                    record_id=story_id,
+                    optional_payload={
+                        "audio_generation_status": "failed",
+                        "audio_generation_error": str(exc),
+                        "audio_script": narration_script,
+                    },
                 )
-                public_url = supabase.storage.from_(bucket).get_public_url(path)
-                update_payload = {"storage": path, "playUrl": public_url, "last_played": now_iso, "voice_id": voice_id}
-                if play_length is not None:
-                    update_payload["play_length"] = play_length
-                supabase.table("Stories").update(update_payload).eq("id", story_id).execute()
-            finally:
+            except Exception:
+                logging.exception("Failed to persist upload failure metadata for story %s", story_id)
+            raise
+        finally:
+            if tmp_path is not None:
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-        except Exception as e:
-            logging.exception("Supabase storage upload failed for story %s: %s", story_id, e)
 
     return {
         "url": public_url,
-        "content_type": content_type,
-        "play_length": play_length,
+        "content_type": final_content_type,
+        "manifest_url": manifest_url,
+        "storage_path": storage_path,
     }
-    # return {"format_text": formatted_text, "text_with_breaks": text_with_breaks}

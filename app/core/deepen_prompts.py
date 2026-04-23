@@ -37,7 +37,7 @@ MANDATORY ELEMENTS TO INCLUDE (when applicable):
 - Health & vitality: effortless workouts, yoga, swimming, deep sleep, nourishing food, resilience
 - Emotional states: exhilaration, gratitude, confidence, love, pride, freedom, wonder, peace
 
-SENSORY DETAILS (include ALL senses): specific colors and lighting; music and ambient sound; food and nature smells; textures and temperature; taste of meals and wines; emotion in the body (chest expanding, warmth, goosebumps).
+SENSORY DETAILS (include ALL senses): specific colors and lighting; natural spoken sound details like voices, breathing, or quiet rooms; food and nature smells; textures and temperature; taste of meals and wines; emotion in the body (chest expanding, warmth, goosebumps).
 
 WRITING STYLE:
 - Vivid and immersive; specific details (not "a nice restaurant" but "Nobu Malibu with ocean views")
@@ -59,6 +59,7 @@ FORBIDDEN:
 - No generic descriptions (use SPECIFIC names, places, brands)
 - NEVER use second person ("you") - always first person ("I")
 - No negativity or qualifying language ("kind of", "sort of", "almost")
+- No bracketed sound cues, sound effects, onomatopoeia, or ambient/background noise instructions
 
 TONE: Optimistic, exhilarating, sensory-rich, emotionally resonant, grateful, joyful, confident, abundant.
 
@@ -68,6 +69,7 @@ CRITICAL AUDIO PACING INSTRUCTIONS:
 - Between paragraphs, add FIVE line breaks.
 - Use commas frequently for natural pauses. Add ellipses (...) for dramatic pauses and em dashes (—) for longer pauses.
 - Maximum sentence length: 20 words.
+- Narration only. Do not include anything that should be heard as a separate sound effect instead of spoken words.
 
 Use this exact formatting:
 Sentence one ends here.   

@@ -13,6 +13,25 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_STORY_MODEL: str = "claude-sonnet-4-20250514"
     CLAUDE_STORY_MAX_TOKENS: int = 900  # enough for 2600 chars + theme
+    CLAUDE_STORY_MAX_CONTINUATIONS: int = 2
+    CLAUDE_STORY_CONTINUATION_MAX_TOKENS: int = 400
+
+    # ElevenLabs voice generation
+    ELEVENLABS_TTS_TIMEOUT_SECONDS: float = 60.0
+    ELEVENLABS_TTS_MAX_RETRIES: int = 2
+    ELEVENLABS_TTS_OUTPUT_FORMAT: str = "pcm_24000"
+    ELEVENLABS_TTS_STABILITY: float = 0.55
+    ELEVENLABS_TTS_SIMILARITY_BOOST: float = 0.7
+    ELEVENLABS_TTS_STYLE: float = 0.0
+    ELEVENLABS_TTS_SPEED: float = 1.0
+    ELEVENLABS_TTS_USE_SPEAKER_BOOST: bool = False
+
+    # Voice clone intake
+    VOICE_CLONE_MAX_FILES: int = 5
+    VOICE_CLONE_MIN_FILE_SECONDS: float = 3.0
+    VOICE_CLONE_MAX_FILE_SECONDS: float = 180.0
+    VOICE_CLONE_MIN_TOTAL_SECONDS: float = 15.0
+    VOICE_CLONE_TARGET_SAMPLE_RATE: int = 44100
 
     # Stripe (subscription paywall: 7-day trial, monthly and annual plans)
     STRIPE_SECRET_KEY: str = ""

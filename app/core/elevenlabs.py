@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
+
 import httpx
 
 from app.core.config import settings
@@ -35,7 +38,10 @@ async def add_voice(
         for filename, content, content_type in files
     ]
 
-    async with httpx.AsyncClient(base_url=settings.ELEVENLABS_BASE_URL, timeout=60.0) as client:
+    async with httpx.AsyncClient(
+        base_url=settings.ELEVENLABS_BASE_URL,
+        timeout=settings.ELEVENLABS_TTS_TIMEOUT_SECONDS,
+    ) as client:
         response = await client.post(
             ELEVENLABS_ADD_VOICE_URL,
             headers=headers,
@@ -55,29 +61,55 @@ def _tts_url(voice_id: str) -> str:
     return f"/v1/text-to-speech/{voice_id}"
 
 
+@dataclass
+class TTSResult:
+    audio_bytes: bytes
+    content_type: str
+    output_format: str
+    request_id: str | None
+    history_item_id: str | None
+
+
+def default_voice_settings() -> dict:
+    return {
+        "stability": settings.ELEVENLABS_TTS_STABILITY,
+        "similarity_boost": settings.ELEVENLABS_TTS_SIMILARITY_BOOST,
+        "style": settings.ELEVENLABS_TTS_STYLE,
+        "speed": settings.ELEVENLABS_TTS_SPEED,
+        "use_speaker_boost": settings.ELEVENLABS_TTS_USE_SPEAKER_BOOST,
+    }
+
+
 async def text_to_speech(
     *,
     voice_id: str,
     text: str,
     model_id: str = "eleven_multilingual_v2",
+    output_format: str | None = None,
+    voice_settings: dict | None = None,
     enable_ssml: bool = False,
     previous_text: str | None = None,
     next_text: str | None = None,
-) -> tuple[bytes, str]:
+    previous_request_ids: list[str] | None = None,
+    next_request_ids: list[str] | None = None,
+    speed: float | None = None,
+    seed: int | None = None,
+) -> TTSResult:
     headers = {
         "xi-api-key": settings.ELEVENLABS_API_KEY,
         "Content-Type": "application/json",
-        "Accept": "audio/mpeg",
+        "Accept": "application/octet-stream",
     }
+    request_voice_settings = default_voice_settings()
+    if voice_settings:
+        request_voice_settings.update({k: v for k, v in voice_settings.items() if v is not None})
+    if speed is not None:
+        request_voice_settings["speed"] = speed
+
     payload: dict = {
         "text": text,
         "model_id": model_id,
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75,
-            # "style": 0.15,
-            "use_speaker_boost": True,
-        },
+        "voice_settings": request_voice_settings,
     }
     if enable_ssml:
         payload["enable_ssml"] = True
@@ -85,13 +117,53 @@ async def text_to_speech(
         payload["previous_text"] = previous_text
     if next_text:
         payload["next_text"] = next_text
+    if previous_request_ids:
+        payload["previous_request_ids"] = previous_request_ids[:3]
+    if next_request_ids:
+        payload["next_request_ids"] = next_request_ids[:3]
+    if seed is not None:
+        payload["seed"] = seed
 
-    async with httpx.AsyncClient(base_url=settings.ELEVENLABS_BASE_URL, timeout=60.0) as client:
-        response = await client.post(
-            _tts_url(voice_id),
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "audio/mpeg")
-        return (response.content, content_type)
+    params = {"output_format": output_format or settings.ELEVENLABS_TTS_OUTPUT_FORMAT}
+    retries = max(0, settings.ELEVENLABS_TTS_MAX_RETRIES)
+    last_exc: Exception | None = None
+    async with httpx.AsyncClient(
+        base_url=settings.ELEVENLABS_BASE_URL,
+        timeout=settings.ELEVENLABS_TTS_TIMEOUT_SECONDS,
+    ) as client:
+        for attempt in range(retries + 1):
+            try:
+                response = await client.post(
+                    _tts_url(voice_id),
+                    headers=headers,
+                    json=payload,
+                    params=params,
+                )
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "application/octet-stream")
+                request_id = (
+                    response.headers.get("request-id")
+                    or response.headers.get("x-request-id")
+                    or response.headers.get("xi-request-id")
+                )
+                history_item_id = response.headers.get("history-item-id") or response.headers.get("xi-history-item-id")
+                return TTSResult(
+                    audio_bytes=response.content,
+                    content_type=content_type,
+                    output_format=params["output_format"],
+                    request_id=request_id,
+                    history_item_id=history_item_id,
+                )
+            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+                last_exc = exc
+                should_retry = attempt < retries and not (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response is not None
+                    and exc.response.status_code < 500
+                )
+                if not should_retry:
+                    raise
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+    assert last_exc is not None
+    raise last_exc

@@ -1,5 +1,7 @@
 """Claude API client for story generation."""
 
+from __future__ import annotations
+
 import logging
 import re
 from anthropic import AsyncAnthropic
@@ -12,6 +14,7 @@ from app.core.config import (
 )
 from app.core.story_prompts import CLIENT_SYSTEM_PROMPT, get_story_user_prompt
 from app.core.deepen_prompts import DEEPEN_SYSTEM_PROMPT, get_deepen_user_prompt
+from app.core.story_text import ensure_complete_story_text, looks_like_clipped_ending
 
 
 def _user_data(
@@ -57,6 +60,94 @@ def _cap_to_chars(text: str, max_chars: int) -> str:
     return text[: max_chars].rstrip()
 
 
+def _usage_as_dict(message) -> dict:
+    usage = getattr(message, "usage", None)
+    if usage is None:
+        return {}
+    return {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", None),
+        "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", None),
+    }
+
+
+def _extract_text_from_message(message) -> str:
+    if not getattr(message, "content", None):
+        return ""
+    parts: list[str] = []
+    for block in message.content:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+async def _request_continuation(
+    *,
+    client: AsyncAnthropic,
+    system_prompt: str,
+    prior_text: str,
+    continuation_label: str,
+) -> tuple[str, dict]:
+    continuation_prompt = (
+        f"The {continuation_label} below was cut off before it finished.\n\n"
+        "Continue from the exact next words.\n"
+        "Do not repeat prior text.\n"
+        "Do not add headers, theme lines, titles, notes, or explanations.\n"
+        "Finish with a complete ending.\n\n"
+        f"{continuation_label.upper()} SO FAR:\n{prior_text}"
+    )
+    message = await client.messages.create(
+        model=settings.CLAUDE_STORY_MODEL,
+        max_tokens=settings.CLAUDE_STORY_CONTINUATION_MAX_TOKENS,
+        system=system_prompt,
+        messages=[{"role": "user", "content": continuation_prompt}],
+    )
+    return _extract_text_from_message(message), {
+        "stop_reason": getattr(message, "stop_reason", None),
+        "usage": _usage_as_dict(message),
+    }
+
+
+async def _finalize_story_output(
+    *,
+    client: AsyncAnthropic,
+    system_prompt: str,
+    initial_text: str,
+    continuation_label: str,
+    max_chars: int,
+) -> tuple[str, dict]:
+    raw_text = (initial_text or "").strip()
+    metadata = {
+        "initial_raw_chars": len(raw_text),
+        "continuations_used": 0,
+        "continuation_stop_reasons": [],
+    }
+
+    for _ in range(max(0, settings.CLAUDE_STORY_MAX_CONTINUATIONS)):
+        if raw_text and not looks_like_clipped_ending(raw_text):
+            break
+        continuation, continuation_meta = await _request_continuation(
+            client=client,
+            system_prompt=system_prompt,
+            prior_text=raw_text,
+            continuation_label=continuation_label,
+        )
+        continuation = continuation.strip()
+        if not continuation:
+            break
+        raw_text = f"{raw_text.rstrip()} {continuation.lstrip()}".strip()
+        metadata["continuations_used"] += 1
+        metadata["continuation_stop_reasons"].append(continuation_meta.get("stop_reason"))
+        metadata.setdefault("continuation_usage", []).append(continuation_meta.get("usage", {}))
+
+    final_text, completion_meta = ensure_complete_story_text(raw_text, max_chars=max_chars)
+    metadata.update(completion_meta)
+    metadata["raw_chars_before_trim"] = len(raw_text)
+    return final_text, metadata
+
+
 # Theme extraction prompt (from client extractStoryTheme) for story evolution tracking
 EXTRACT_THEME_USER = """Read this manifestation story and extract the main theme in 2-4 words:
 
@@ -96,7 +187,7 @@ async def generate_story(
     storyCount: int = 1,
     previousStoryThemes: list[str] | None = None,
     system_prompt: str | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict]:
     """Generate a past-tense personal story. Returns (theme, story). Story is capped at STORY_MAX_CHARS."""
     if not settings.ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY is not set")
@@ -130,12 +221,27 @@ async def generate_story(
     if not message.content or not message.content[0].text:
         raise ValueError("Claude returned no text")
 
-    raw = message.content[0].text.strip()
+    raw = _extract_text_from_message(message)
     theme, story = _parse_theme_and_story(raw)
     if not theme and desireCategory in THEME_BY_CATEGORY:
         theme = THEME_BY_CATEGORY[desireCategory]
-    story = _cap_to_chars(story, STORY_MAX_CHARS)
-    return theme, story
+    story, completion_meta = await _finalize_story_output(
+        client=client,
+        system_prompt=prompt,
+        initial_text=story,
+        continuation_label="story",
+        max_chars=STORY_MAX_CHARS,
+    )
+    metadata = {
+        "model": settings.CLAUDE_STORY_MODEL,
+        "max_tokens": settings.CLAUDE_STORY_MAX_TOKENS,
+        "stop_reason": getattr(message, "stop_reason", None),
+        "usage": _usage_as_dict(message),
+        "raw_chars": len(raw),
+        "theme": theme,
+    }
+    metadata.update(completion_meta)
+    return theme, story, metadata
 
 
 async def generate_deepen_story(
@@ -148,7 +254,7 @@ async def generate_deepen_story(
     original_theme: str,
     previous_story_text: str,
     deepening_count: int,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict]:
     """Generate a deepening continuation story. Returns (theme, story). Story is capped at STORY_MAX_CHARS."""
     if not settings.ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY is not set")
@@ -174,7 +280,22 @@ async def generate_deepen_story(
         raise
     if not message.content or not message.content[0].text:
         raise ValueError("Claude returned no text")
-    story = message.content[0].text.strip()
-    story = _cap_to_chars(story, STORY_MAX_CHARS)
+    initial_story = _extract_text_from_message(message)
+    story, completion_meta = await _finalize_story_output(
+        client=client,
+        system_prompt=DEEPEN_SYSTEM_PROMPT.strip(),
+        initial_text=initial_story,
+        continuation_label="story continuation",
+        max_chars=STORY_MAX_CHARS,
+    )
     theme = f"{original_theme} (Deepening #{deepening_count})"
-    return theme, story
+    metadata = {
+        "model": settings.CLAUDE_STORY_MODEL,
+        "max_tokens": settings.CLAUDE_STORY_MAX_TOKENS,
+        "stop_reason": getattr(message, "stop_reason", None),
+        "usage": _usage_as_dict(message),
+        "raw_chars": len(initial_story),
+        "theme": theme,
+    }
+    metadata.update(completion_meta)
+    return theme, story, metadata
