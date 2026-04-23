@@ -5,7 +5,8 @@ import subprocess
 import tempfile
 import time
 import wave
-from audioop import max as audio_max, rms as audio_rms
+import math
+import struct
 from datetime import datetime, timezone
 
 import httpx
@@ -61,9 +62,8 @@ def _analyze_wav_bytes(content: bytes) -> dict:
             sample_width = wav_file.getsampwidth()
             if not frames or sample_width <= 0:
                 return {}
-            peak = audio_max(frames, sample_width)
-            rms_value = audio_rms(frames, sample_width)
-            max_possible = float((2 ** (8 * sample_width - 1)) - 1)
+            peak, rms_value = _pcm_peak_rms(frames, sample_width)
+            max_possible = float((2 ** (8 * sample_width - 1)) - 1) if sample_width in (1, 2, 3, 4) else 0.0
             return {
                 "channels": wav_file.getnchannels(),
                 "sample_rate": wav_file.getframerate(),
@@ -71,6 +71,74 @@ def _analyze_wav_bytes(content: bytes) -> dict:
                 "peak_ratio": round(peak / max_possible, 4) if max_possible else None,
                 "rms_ratio": round(rms_value / max_possible, 4) if max_possible else None,
             }
+
+
+def _pcm_peak_rms(pcm_frames: bytes, sample_width: int) -> tuple[int, int]:
+    """
+    Compute peak and RMS for little-endian signed PCM frames.
+
+    Replaces `audioop.max` and `audioop.rms` for Python 3.13+ where `audioop` is removed.
+    """
+    if not pcm_frames:
+        return 0, 0
+    if sample_width == 1:
+        # 8-bit PCM is usually unsigned in WAV; wave module returns raw bytes.
+        # Convert to signed centered at 128.
+        peak = 0
+        acc = 0.0
+        n = len(pcm_frames)
+        for b in pcm_frames:
+            v = int(b) - 128
+            av = abs(v)
+            if av > peak:
+                peak = av
+            acc += float(v * v)
+        rms = int(math.sqrt(acc / n)) if n else 0
+        return peak, rms
+
+    if sample_width == 2:
+        peak = 0
+        acc = 0.0
+        n = len(pcm_frames) // 2
+        for (v,) in struct.iter_unpack("<h", pcm_frames[: n * 2]):
+            av = abs(int(v))
+            if av > peak:
+                peak = av
+            acc += float(v * v)
+        rms = int(math.sqrt(acc / n)) if n else 0
+        return peak, rms
+
+    if sample_width == 3:
+        peak = 0
+        acc = 0.0
+        n = len(pcm_frames) // 3
+        for i in range(0, n * 3, 3):
+            b0 = pcm_frames[i]
+            b1 = pcm_frames[i + 1]
+            b2 = pcm_frames[i + 2]
+            v = b0 | (b1 << 8) | (b2 << 16)
+            if v & 0x800000:
+                v -= 0x1000000
+            av = abs(v)
+            if av > peak:
+                peak = av
+            acc += float(v * v)
+        rms = int(math.sqrt(acc / n)) if n else 0
+        return peak, rms
+
+    if sample_width == 4:
+        peak = 0
+        acc = 0.0
+        n = len(pcm_frames) // 4
+        for (v,) in struct.iter_unpack("<i", pcm_frames[: n * 4]):
+            av = abs(int(v))
+            if av > peak:
+                peak = av
+            acc += float(v * v)
+        rms = int(math.sqrt(acc / n)) if n else 0
+        return peak, rms
+
+    return 0, 0
 
 
 def _normalize_clone_audio(filename: str, content: bytes) -> tuple[str, bytes, str, dict]:
