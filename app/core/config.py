@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     ELEVENLABS_TTS_USE_SPEAKER_BOOST: bool = False
 
     # Auphonic post-processing for generated story audio
-    AUPHONIC_ENABLED: bool = False
+    AUPHONIC_ENABLED: bool = True
     AUPHONIC_API_KEY: str = ""
     AUPHONIC_BASE_URL: str = "https://auphonic.com"
     AUPHONIC_PRESET: str = ""
