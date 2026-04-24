@@ -55,7 +55,7 @@ def _is_done_status(status: int | None, status_string: str | None) -> bool:
 
 
 def _is_failed_status(status: int | None, status_string: str | None) -> bool:
-    if status is not None and status >= 4:
+    if status == 2:
         return True
     text = (status_string or "").strip().lower()
     return any(term in text for term in _FAILED_STATUS_TERMS)
