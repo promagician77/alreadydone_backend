@@ -17,6 +17,10 @@ python3 -m venv .venv
 # Create .env with your keys (ELEVENLABS_API_KEY, SUPABASE_*, JWT_SECRET, etc.)
 cp .env.example .env
 # Edit .env with your values
+# If you want processed story audio through Auphonic, also set:
+# AUPHONIC_ENABLED=true
+# AUPHONIC_API_KEY=...
+# AUPHONIC_PRESET=Already Done   # or the preset UUID
 ```
 
 ## 2. Install the systemd service

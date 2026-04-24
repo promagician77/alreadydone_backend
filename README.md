@@ -16,9 +16,15 @@ FastAPI backend for **ALREADY** — voice cloning and stories (ElevenLabs).
    pip install -r requirements.txt
    ```
 
-3. **Configure ElevenLabs**:
+3. **Configure environment variables**:
    - Copy `.env.example` to `.env`
    - Set `ELEVENLABS_API_KEY` to your [ElevenLabs](https://elevenlabs.io) API key
+   - Set `SUPABASE_URL` / `SUPABASE_KEY` for audio storage and story metadata
+   - Optional: enable Auphonic post-processing for story audio by setting:
+     - `AUPHONIC_ENABLED=true`
+     - `AUPHONIC_API_KEY=<your api key>`
+     - `AUPHONIC_PRESET=<preset uuid or preset name>`
+   - Auphonic API key auth is appropriate for this backend because it is a first-party server integration; OAuth is only needed for multi-user third-party app access
 
 ## Run
 

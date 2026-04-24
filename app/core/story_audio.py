@@ -13,8 +13,7 @@ import uuid
 import wave
 from datetime import datetime, timezone
 
-import httpx
-
+from app.core.auphonic import AuphonicError, process_audio as process_audio_with_auphonic
 from app.core.config import settings
 from app.core.db_utils import safe_partial_update
 from app.core.elevenlabs import default_voice_settings, text_to_speech
@@ -229,6 +228,14 @@ def _extension_for_content_type(content_type: str) -> str:
 
 
 def _estimate_duration(content_type: str, output_format: str, audio_bytes: bytes) -> float | None:
+    content_type = (content_type or "").lower()
+    if "wav" in content_type:
+        try:
+            with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
+                return wav_file.getnframes() / float(wav_file.getframerate())
+        except Exception:
+            logging.debug("Wave parser could not estimate duration", exc_info=True)
+
     try:
         codec, sample_rate = _parse_output_format(output_format)
     except ValueError:
@@ -255,149 +262,6 @@ def _write_temp_file(content: bytes, suffix: str) -> str:
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(content)
         return tmp.name
-
-
-async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dict] | None:
-    """
-    Send WAV bytes to Auphonic using a preset and return processed WAV bytes.
-
-    Returns (processed_bytes, meta) on success, or None if disabled/misconfigured/fails.
-    """
-    if not settings.AUPHONIC_ENABLED:
-        return None
-    if not settings.AUPHONIC_API_KEY.strip() or not settings.AUPHONIC_PRESET_UUID.strip():
-        logging.info(
-            "[auphonic] enabled but not configured (api_key=%s preset_uuid=%s) — skipping",
-            "set" if settings.AUPHONIC_API_KEY.strip() else "missing",
-            "set" if settings.AUPHONIC_PRESET_UUID.strip() else "missing",
-        )
-        return None
-
-    base_url = "https://auphonic.com"
-    started_at = time.perf_counter()
-    logging.info(
-        "[auphonic] start preset=%s input_bytes=%d max_wait_s=%s",
-        settings.AUPHONIC_PRESET_UUID,
-        len(wav_bytes),
-        settings.AUPHONIC_MAX_WAIT_SECONDS,
-    )
-    tmp_in = _write_temp_file(wav_bytes, ".wav")
-    production_uuid: str | None = None
-    try:
-        timeout = httpx.Timeout(settings.AUPHONIC_HTTP_TIMEOUT_SECONDS)
-        async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
-            # Create a production from preset + upload file.
-            # Auphonic uses HTTP Basic Auth with API key as username.
-            with open(tmp_in, "rb") as f:
-                files = {"input_file": ("input.wav", f, "audio/wav")}
-                resp = await client.post(
-                    "/api/productions.json",
-                    auth=(settings.AUPHONIC_API_KEY, ""),
-                    data={"preset": settings.AUPHONIC_PRESET_UUID},
-                    files=files,
-                )
-            logging.info(
-                "[auphonic] create production status=%s elapsed_ms=%s",
-                resp.status_code,
-                round((time.perf_counter() - started_at) * 1000, 2),
-            )
-            resp.raise_for_status()
-            payload = resp.json() if resp.content else {}
-            data = payload.get("data") if isinstance(payload, dict) else None
-            production_uuid = (data or {}).get("uuid") or payload.get("uuid")
-            if not production_uuid:
-                logging.warning("[auphonic] create production: missing uuid in response")
-                return None
-            logging.info("[auphonic] production created uuid=%s", production_uuid)
-
-            # Poll until done (or timeout).
-            deadline = started_at + float(settings.AUPHONIC_MAX_WAIT_SECONDS)
-            last_status = None
-            while time.perf_counter() < deadline:
-                pr = await client.get(
-                    f"/api/production/{production_uuid}.json",
-                    auth=(settings.AUPHONIC_API_KEY, ""),
-                )
-                pr.raise_for_status()
-                pjson = pr.json() if pr.content else {}
-                pdata = pjson.get("data") if isinstance(pjson, dict) else None
-                status = (pdata or {}).get("status") or pjson.get("status")
-                last_status = status
-                logging.debug("[auphonic] poll uuid=%s status=%s", production_uuid, status)
-
-                # Auphonic commonly returns numeric status codes; treat 3 / "3" / "done" as complete.
-                if status in (3, "3", "done", "Done", "completed", "Completed"):
-                    out_files = (pdata or {}).get("output_files") or pjson.get("output_files") or []
-                    # Pick first downloadable output.
-                    download_url = None
-                    for of in out_files if isinstance(out_files, list) else []:
-                        if not isinstance(of, dict):
-                            continue
-                        download_url = (
-                            of.get("download_url")
-                            or of.get("downloadUrl")
-                            or of.get("url")
-                            or of.get("public_url")
-                        )
-                        if download_url:
-                            break
-                    if not download_url:
-                        logging.warning("[auphonic] done but no output download url uuid=%s", production_uuid)
-                        return None
-
-                    out = await client.get(download_url)
-                    logging.info(
-                        "[auphonic] download output uuid=%s status=%s",
-                        production_uuid,
-                        out.status_code,
-                    )
-                    out.raise_for_status()
-                    processed = out.content
-                    if not processed:
-                        logging.warning("[auphonic] output empty uuid=%s", production_uuid)
-                        return None
-                    meta = {
-                        "auphonic": True,
-                        "production_uuid": production_uuid,
-                        "status": last_status,
-                        "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
-                        "download_url": download_url,
-                    }
-                    logging.info(
-                        "[auphonic] complete uuid=%s output_bytes=%d elapsed_ms=%s",
-                        production_uuid,
-                        len(processed),
-                        meta["elapsed_ms"],
-                    )
-                    return processed, meta
-
-                if status in (4, "4", "error", "Error", "failed", "Failed"):
-                    logging.warning("[auphonic] failed uuid=%s status=%s", production_uuid, status)
-                    return None
-
-                await asyncio_sleep(settings.AUPHONIC_POLL_INTERVAL_SECONDS)
-
-            logging.warning(
-                "[auphonic] timeout uuid=%s last_status=%s waited_ms=%s",
-                production_uuid,
-                last_status,
-                round((time.perf_counter() - started_at) * 1000, 2),
-            )
-    except Exception:
-        logging.exception("Auphonic post-processing failed")
-        return None
-    finally:
-        try:
-            os.unlink(tmp_in)
-        except OSError:
-            pass
-
-
-async def asyncio_sleep(seconds: float) -> None:
-    # Local tiny wrapper to avoid importing asyncio at module import time elsewhere.
-    import asyncio
-
-    await asyncio.sleep(seconds)
 
 
 def _upload_temp_file(*, bucket: str, path: str, tmp_path: str, content_type: str) -> str:
@@ -442,6 +306,7 @@ async def generate_and_store_story_audio(
     The default flow requests PCM from ElevenLabs, concatenates raw frames safely,
     and wraps the final result into a single WAV file to avoid MP3 stitch artifacts.
     """
+    generation_started_at = time.perf_counter()
     logging.info("Generate story audio for story_id=%s voice_id=%s", story_id, voice_id)
     if not text or not text.strip():
         supabase = get_supabase()
@@ -493,6 +358,7 @@ async def generate_and_store_story_audio(
     continuity_request_ids: list[str] = []
     total_duration = 0.0
     final_content_type = "application/octet-stream"
+    tts_started_at = time.perf_counter()
 
     try:
         for idx, paragraph in enumerate(paragraphs):
@@ -568,15 +434,62 @@ async def generate_and_store_story_audio(
         audio_bytes = b"".join(audio_chunks)
         file_ext = _extension_for_content_type(final_content_type)
 
-    # Optional: post-process story audio for consistent loudness/leveling (Auphonic).
-    # Only applied when we have a single WAV result.
-    postprocess_meta: dict | None = None
-    if final_content_type == "audio/wav" and file_ext == "wav":
-        processed = await _try_auphonic_postprocess_wav(wav_bytes=audio_bytes)
-        if processed is not None:
-            audio_bytes, postprocess_meta = processed
-
+    tts_processing_ms = round((time.perf_counter() - tts_started_at) * 1000, 2)
     play_length = round(total_duration, 2) if total_duration > 0 else None
+    postprocess_metadata = {
+        "provider": "auphonic",
+        "enabled": bool(settings.AUPHONIC_ENABLED),
+        "applied": False,
+        "fallback_reason": None,
+    }
+    if settings.AUPHONIC_ENABLED:
+        try:
+            auphonic_result = await process_audio_with_auphonic(
+                audio_bytes=audio_bytes,
+                filename=f"story-{story_id}.{file_ext}",
+                title=f"Story {story_id}",
+                output_basename=f"story-{story_id}",
+            )
+            audio_bytes = auphonic_result.audio_bytes
+            final_content_type = auphonic_result.content_type
+            file_ext = auphonic_result.file_ext
+            processed_duration = _estimate_duration(
+                final_content_type,
+                auphonic_result.output_format,
+                audio_bytes,
+            )
+            if processed_duration is not None:
+                play_length = round(processed_duration, 2)
+            postprocess_metadata = {
+                **postprocess_metadata,
+                **auphonic_result.metadata,
+                "applied": True,
+                "final_content_type": final_content_type,
+                "final_file_ext": file_ext,
+                "play_length": play_length,
+            }
+        except AuphonicError as exc:
+            logging.warning(
+                "Auphonic post-processing failed for story %s, falling back to ElevenLabs audio: %s",
+                story_id,
+                exc,
+            )
+            postprocess_metadata = {
+                **postprocess_metadata,
+                "error": str(exc),
+                "fallback_reason": str(exc),
+            }
+
+    processing_metrics = {
+        "tts_processing_ms": tts_processing_ms,
+        "postprocess_ms": postprocess_metadata.get("processing_ms"),
+        "processing_until_manifest_ms": round(
+            (time.perf_counter() - generation_started_at) * 1000,
+            2,
+        ),
+    }
+    if postprocess_metadata.get("applied"):
+        processing_metrics["postprocess_provider"] = "auphonic"
 
     manifest = {
         "story_id": story_id,
@@ -593,14 +506,15 @@ async def generate_and_store_story_audio(
         "request_ids": [rid for rid in request_ids if rid and not rid.startswith("chunk-")],
         "play_length": play_length,
         "content_type": final_content_type,
+        "postprocess": postprocess_metadata,
+        "metrics": processing_metrics,
     }
-    if postprocess_meta:
-        manifest["postprocess"] = postprocess_meta
 
     public_url = None
     manifest_url = None
     storage_path = None
     manifest_path = None
+    total_generation_ms = None
     if settings.SUPABASE_URL and settings.SUPABASE_KEY:
         bucket = settings.SUPABASE_STORAGE_BUCKET
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -624,6 +538,7 @@ async def generate_and_store_story_audio(
             }
             if play_length is not None:
                 base_payload["play_length"] = play_length
+            total_generation_ms = round((time.perf_counter() - generation_started_at) * 1000, 2)
             safe_partial_update(
                 table_name="Stories",
                 id_field="id",
@@ -639,6 +554,16 @@ async def generate_and_store_story_audio(
                     "audio_voice_settings": request_voice_settings,
                     "audio_manifest_path": manifest_path,
                     "audio_manifest_url": manifest_url,
+                    "audio_tts_processing_ms": tts_processing_ms,
+                    "audio_postprocess_provider": "auphonic" if postprocess_metadata.get("applied") else None,
+                    "audio_postprocess_status": (
+                        "completed"
+                        if postprocess_metadata.get("applied")
+                        else ("disabled" if not postprocess_metadata.get("enabled") else "fallback")
+                    ),
+                    "audio_postprocess_metadata": postprocess_metadata,
+                    "audio_postprocess_ms": postprocess_metadata.get("processing_ms"),
+                    "audio_generation_total_ms": total_generation_ms,
                 },
             )
         except Exception as exc:
@@ -669,4 +594,10 @@ async def generate_and_store_story_audio(
         "content_type": final_content_type,
         "manifest_url": manifest_url,
         "storage_path": storage_path,
+        "play_length": play_length,
+        "postprocess": postprocess_metadata,
+        "metrics": {
+            **processing_metrics,
+            "audio_generation_total_ms": total_generation_ms,
+        },
     }

@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     ELEVENLABS_TTS_SPEED: float = 1.0
     ELEVENLABS_TTS_USE_SPEAKER_BOOST: bool = False
 
+    # Auphonic post-processing for generated story audio
+    AUPHONIC_ENABLED: bool = False
+    AUPHONIC_API_KEY: str = ""
+    AUPHONIC_BASE_URL: str = "https://auphonic.com"
+    AUPHONIC_PRESET: str = ""
+    AUPHONIC_TIMEOUT_SECONDS: float = 30.0
+    AUPHONIC_POLL_INTERVAL_SECONDS: float = 2.0
+    AUPHONIC_MAX_WAIT_SECONDS: float = 45.0
+
     # Voice clone intake
     VOICE_CLONE_MAX_FILES: int = 5
     VOICE_CLONE_MIN_FILE_SECONDS: float = 3.0
@@ -48,20 +57,6 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     # RevenueCat webhook: exact value expected in Authorization header (set in .env).
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
-
-    # Auphonic (optional post-processing for generated story audio)
-    # If enabled + configured, generated WAV audio will be sent to Auphonic and the processed
-    # output will be uploaded to Supabase Storage instead of the raw ElevenLabs WAV.
-    AUPHONIC_ENABLED: bool = False
-    AUPHONIC_API_KEY: str = ""
-    # UUID of the preset to use (e.g. your "Already Done" preset)
-    AUPHONIC_PRESET_UUID: str = ""
-    # Max total time to wait for Auphonic processing (end-to-end), in seconds
-    AUPHONIC_MAX_WAIT_SECONDS: float = 60.0
-    # Poll interval while waiting for completion
-    AUPHONIC_POLL_INTERVAL_SECONDS: float = 1.5
-    # HTTP timeout per request to Auphonic
-    AUPHONIC_HTTP_TIMEOUT_SECONDS: float = 20.0
 
     class Config:
         env_file = ".env"
