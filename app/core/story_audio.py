@@ -266,10 +266,21 @@ async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dic
     if not settings.AUPHONIC_ENABLED:
         return None
     if not settings.AUPHONIC_API_KEY.strip() or not settings.AUPHONIC_PRESET_UUID.strip():
+        logging.info(
+            "[auphonic] enabled but not configured (api_key=%s preset_uuid=%s) — skipping",
+            "set" if settings.AUPHONIC_API_KEY.strip() else "missing",
+            "set" if settings.AUPHONIC_PRESET_UUID.strip() else "missing",
+        )
         return None
 
     base_url = "https://auphonic.com"
     started_at = time.perf_counter()
+    logging.info(
+        "[auphonic] start preset=%s input_bytes=%d max_wait_s=%s",
+        settings.AUPHONIC_PRESET_UUID,
+        len(wav_bytes),
+        settings.AUPHONIC_MAX_WAIT_SECONDS,
+    )
     tmp_in = _write_temp_file(wav_bytes, ".wav")
     production_uuid: str | None = None
     try:
@@ -285,12 +296,19 @@ async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dic
                     data={"preset": settings.AUPHONIC_PRESET_UUID},
                     files=files,
                 )
+            logging.info(
+                "[auphonic] create production status=%s elapsed_ms=%s",
+                resp.status_code,
+                round((time.perf_counter() - started_at) * 1000, 2),
+            )
             resp.raise_for_status()
             payload = resp.json() if resp.content else {}
             data = payload.get("data") if isinstance(payload, dict) else None
             production_uuid = (data or {}).get("uuid") or payload.get("uuid")
             if not production_uuid:
+                logging.warning("[auphonic] create production: missing uuid in response")
                 return None
+            logging.info("[auphonic] production created uuid=%s", production_uuid)
 
             # Poll until done (or timeout).
             deadline = started_at + float(settings.AUPHONIC_MAX_WAIT_SECONDS)
@@ -305,6 +323,7 @@ async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dic
                 pdata = pjson.get("data") if isinstance(pjson, dict) else None
                 status = (pdata or {}).get("status") or pjson.get("status")
                 last_status = status
+                logging.debug("[auphonic] poll uuid=%s status=%s", production_uuid, status)
 
                 # Auphonic commonly returns numeric status codes; treat 3 / "3" / "done" as complete.
                 if status in (3, "3", "done", "Done", "completed", "Completed"):
@@ -323,12 +342,19 @@ async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dic
                         if download_url:
                             break
                     if not download_url:
+                        logging.warning("[auphonic] done but no output download url uuid=%s", production_uuid)
                         return None
 
                     out = await client.get(download_url)
+                    logging.info(
+                        "[auphonic] download output uuid=%s status=%s",
+                        production_uuid,
+                        out.status_code,
+                    )
                     out.raise_for_status()
                     processed = out.content
                     if not processed:
+                        logging.warning("[auphonic] output empty uuid=%s", production_uuid)
                         return None
                     meta = {
                         "auphonic": True,
@@ -337,13 +363,26 @@ async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dic
                         "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
                         "download_url": download_url,
                     }
+                    logging.info(
+                        "[auphonic] complete uuid=%s output_bytes=%d elapsed_ms=%s",
+                        production_uuid,
+                        len(processed),
+                        meta["elapsed_ms"],
+                    )
                     return processed, meta
 
                 if status in (4, "4", "error", "Error", "failed", "Failed"):
+                    logging.warning("[auphonic] failed uuid=%s status=%s", production_uuid, status)
                     return None
 
                 await asyncio_sleep(settings.AUPHONIC_POLL_INTERVAL_SECONDS)
 
+            logging.warning(
+                "[auphonic] timeout uuid=%s last_status=%s waited_ms=%s",
+                production_uuid,
+                last_status,
+                round((time.perf_counter() - started_at) * 1000, 2),
+            )
     except Exception:
         logging.exception("Auphonic post-processing failed")
         return None
