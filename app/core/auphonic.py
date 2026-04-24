@@ -36,7 +36,7 @@ class AuphonicResult:
 
 def _auth_headers() -> dict[str, str]:
     return {
-        "Authorization": f"bearer {settings.AUPHONIC_API_KEY}",
+        "Authorization": f"Bearer {settings.AUPHONIC_API_KEY}",
         "Accept": "application/json",
     }
 
