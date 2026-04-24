@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -47,78 +46,6 @@ def _extract_data(payload: dict) -> dict:
     if not isinstance(data, dict):
         raise AuphonicError("Auphonic response did not include a data object.")
     return data
-
-
-def _looks_like_uuid(value: str) -> bool:
-    text = (value or "").strip()
-    return len(text) == 22 and text.isalnum()
-
-
-def _response_error_detail(response: httpx.Response) -> str:
-    try:
-        payload = response.json()
-        parts: list[str] = []
-        error_message = payload.get("error_message")
-        if error_message:
-            parts.append(str(error_message).strip())
-        form_errors = payload.get("form_errors")
-        if isinstance(form_errors, dict) and form_errors:
-            parts.append(json.dumps(form_errors, sort_keys=True))
-        if parts:
-            return " | ".join(p for p in parts if p)
-    except Exception:
-        pass
-
-    body = response.text.strip()
-    return body if body else f"HTTP {response.status_code}"
-
-
-async def _resolve_preset_identifier(client: httpx.AsyncClient, preset: str) -> str:
-    preset = (preset or "").strip()
-    if not preset:
-        raise AuphonicError("AUPHONIC_PRESET is empty.")
-    if _looks_like_uuid(preset):
-        return preset
-
-    response = await client.get(
-        "/api/presets.json",
-        headers=_auth_headers(),
-        params={"minimal_data": 1},
-    )
-    response.raise_for_status()
-    payload = response.json()
-    data = payload.get("data")
-    if not isinstance(data, list):
-        raise AuphonicError("Could not load presets from Auphonic.")
-
-    exact_match = None
-    casefold_match = None
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        preset_name = (item.get("preset_name") or "").strip()
-        preset_uuid = (item.get("uuid") or "").strip()
-        if not preset_name or not preset_uuid:
-            continue
-        if preset_name == preset:
-            exact_match = preset_uuid
-            break
-        if casefold_match is None and preset_name.casefold() == preset.casefold():
-            casefold_match = preset_uuid
-
-    resolved = exact_match or casefold_match
-    if resolved:
-        return resolved
-
-    available = [
-        (item.get("preset_name") or "").strip()
-        for item in data
-        if isinstance(item, dict) and (item.get("preset_name") or "").strip()
-    ]
-    raise AuphonicError(
-        f"Auphonic preset '{preset}' was not found for this account. "
-        f"Available presets: {', '.join(available) if available else 'none'}"
-    )
 
 
 def _is_done_status(status: int | None, status_string: str | None) -> bool:
@@ -217,7 +144,6 @@ async def process_audio(
     audio_bytes: bytes,
     filename: str,
     title: str,
-    input_content_type: str | None = None,
     output_basename: str | None = None,
 ) -> AuphonicResult:
     if not settings.AUPHONIC_API_KEY:
@@ -240,26 +166,13 @@ async def process_audio(
             timeout=settings.AUPHONIC_TIMEOUT_SECONDS,
             follow_redirects=True,
         ) as client:
-            preset_identifier = await _resolve_preset_identifier(client, settings.AUPHONIC_PRESET)
             create_response = await client.post(
                 _AUPHONIC_SIMPLE_PRODUCTIONS_URL,
                 headers=_auth_headers(),
-                data={**request_data, "preset": preset_identifier},
-                files={
-                    "input_file": (
-                        filename,
-                        audio_bytes,
-                        input_content_type or _content_type_for_format("", filename),
-                    )
-                },
+                data=request_data,
+                files={"input_file": (filename, audio_bytes, "application/octet-stream")},
             )
-            try:
-                create_response.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                detail = _response_error_detail(create_response)
-                raise AuphonicError(
-                    f"Auphonic create production failed ({create_response.status_code}): {detail}"
-                ) from exc
+            create_response.raise_for_status()
             production = _extract_data(create_response.json())
             production_uuid = (production.get("uuid") or "").strip()
             if not production_uuid:
@@ -327,5 +240,15 @@ async def process_audio(
                 filename=filename,
                 metadata=metadata,
             )
+    except httpx.HTTPStatusError as exc:
+        # Include response body to make debugging preset/auth issues possible from logs.
+        try:
+            body = (exc.response.text or "").strip()
+        except Exception:
+            body = ""
+        suffix = f" — {body}" if body else ""
+        raise AuphonicError(
+            f"Auphonic API request failed: {exc.response.status_code} {exc.response.reason_phrase}{suffix}"
+        ) from exc
     except httpx.HTTPError as exc:
         raise AuphonicError(f"Auphonic API request failed: {exc}") from exc

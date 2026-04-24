@@ -448,7 +448,6 @@ async def generate_and_store_story_audio(
                 audio_bytes=audio_bytes,
                 filename=f"story-{story_id}.{file_ext}",
                 title=f"Story {story_id}",
-                input_content_type=final_content_type,
                 output_basename=f"story-{story_id}",
             )
             audio_bytes = auphonic_result.audio_bytes
