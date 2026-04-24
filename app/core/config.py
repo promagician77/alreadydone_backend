@@ -49,6 +49,20 @@ class Settings(BaseSettings):
     # RevenueCat webhook: exact value expected in Authorization header (set in .env).
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
 
+    # Auphonic (optional post-processing for generated story audio)
+    # If enabled + configured, generated WAV audio will be sent to Auphonic and the processed
+    # output will be uploaded to Supabase Storage instead of the raw ElevenLabs WAV.
+    AUPHONIC_ENABLED: bool = False
+    AUPHONIC_API_KEY: str = ""
+    # UUID of the preset to use (e.g. your "Already Done" preset)
+    AUPHONIC_PRESET_UUID: str = ""
+    # Max total time to wait for Auphonic processing (end-to-end), in seconds
+    AUPHONIC_MAX_WAIT_SECONDS: float = 60.0
+    # Poll interval while waiting for completion
+    AUPHONIC_POLL_INTERVAL_SECONDS: float = 1.5
+    # HTTP timeout per request to Auphonic
+    AUPHONIC_HTTP_TIMEOUT_SECONDS: float = 20.0
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

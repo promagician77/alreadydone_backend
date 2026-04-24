@@ -13,6 +13,8 @@ import uuid
 import wave
 from datetime import datetime, timezone
 
+import httpx
+
 from app.core.config import settings
 from app.core.db_utils import safe_partial_update
 from app.core.elevenlabs import default_voice_settings, text_to_speech
@@ -255,6 +257,110 @@ def _write_temp_file(content: bytes, suffix: str) -> str:
         return tmp.name
 
 
+async def _try_auphonic_postprocess_wav(*, wav_bytes: bytes) -> tuple[bytes, dict] | None:
+    """
+    Send WAV bytes to Auphonic using a preset and return processed WAV bytes.
+
+    Returns (processed_bytes, meta) on success, or None if disabled/misconfigured/fails.
+    """
+    if not settings.AUPHONIC_ENABLED:
+        return None
+    if not settings.AUPHONIC_API_KEY.strip() or not settings.AUPHONIC_PRESET_UUID.strip():
+        return None
+
+    base_url = "https://auphonic.com"
+    started_at = time.perf_counter()
+    tmp_in = _write_temp_file(wav_bytes, ".wav")
+    production_uuid: str | None = None
+    try:
+        timeout = httpx.Timeout(settings.AUPHONIC_HTTP_TIMEOUT_SECONDS)
+        async with httpx.AsyncClient(base_url=base_url, timeout=timeout) as client:
+            # Create a production from preset + upload file.
+            # Auphonic uses HTTP Basic Auth with API key as username.
+            with open(tmp_in, "rb") as f:
+                files = {"input_file": ("input.wav", f, "audio/wav")}
+                resp = await client.post(
+                    "/api/productions.json",
+                    auth=(settings.AUPHONIC_API_KEY, ""),
+                    data={"preset": settings.AUPHONIC_PRESET_UUID},
+                    files=files,
+                )
+            resp.raise_for_status()
+            payload = resp.json() if resp.content else {}
+            data = payload.get("data") if isinstance(payload, dict) else None
+            production_uuid = (data or {}).get("uuid") or payload.get("uuid")
+            if not production_uuid:
+                return None
+
+            # Poll until done (or timeout).
+            deadline = started_at + float(settings.AUPHONIC_MAX_WAIT_SECONDS)
+            last_status = None
+            while time.perf_counter() < deadline:
+                pr = await client.get(
+                    f"/api/production/{production_uuid}.json",
+                    auth=(settings.AUPHONIC_API_KEY, ""),
+                )
+                pr.raise_for_status()
+                pjson = pr.json() if pr.content else {}
+                pdata = pjson.get("data") if isinstance(pjson, dict) else None
+                status = (pdata or {}).get("status") or pjson.get("status")
+                last_status = status
+
+                # Auphonic commonly returns numeric status codes; treat 3 / "3" / "done" as complete.
+                if status in (3, "3", "done", "Done", "completed", "Completed"):
+                    out_files = (pdata or {}).get("output_files") or pjson.get("output_files") or []
+                    # Pick first downloadable output.
+                    download_url = None
+                    for of in out_files if isinstance(out_files, list) else []:
+                        if not isinstance(of, dict):
+                            continue
+                        download_url = (
+                            of.get("download_url")
+                            or of.get("downloadUrl")
+                            or of.get("url")
+                            or of.get("public_url")
+                        )
+                        if download_url:
+                            break
+                    if not download_url:
+                        return None
+
+                    out = await client.get(download_url)
+                    out.raise_for_status()
+                    processed = out.content
+                    if not processed:
+                        return None
+                    meta = {
+                        "auphonic": True,
+                        "production_uuid": production_uuid,
+                        "status": last_status,
+                        "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                        "download_url": download_url,
+                    }
+                    return processed, meta
+
+                if status in (4, "4", "error", "Error", "failed", "Failed"):
+                    return None
+
+                await asyncio_sleep(settings.AUPHONIC_POLL_INTERVAL_SECONDS)
+
+    except Exception:
+        logging.exception("Auphonic post-processing failed")
+        return None
+    finally:
+        try:
+            os.unlink(tmp_in)
+        except OSError:
+            pass
+
+
+async def asyncio_sleep(seconds: float) -> None:
+    # Local tiny wrapper to avoid importing asyncio at module import time elsewhere.
+    import asyncio
+
+    await asyncio.sleep(seconds)
+
+
 def _upload_temp_file(*, bucket: str, path: str, tmp_path: str, content_type: str) -> str:
     supabase = get_supabase()
     supabase.storage.from_(bucket).upload(
@@ -423,6 +529,14 @@ async def generate_and_store_story_audio(
         audio_bytes = b"".join(audio_chunks)
         file_ext = _extension_for_content_type(final_content_type)
 
+    # Optional: post-process story audio for consistent loudness/leveling (Auphonic).
+    # Only applied when we have a single WAV result.
+    postprocess_meta: dict | None = None
+    if final_content_type == "audio/wav" and file_ext == "wav":
+        processed = await _try_auphonic_postprocess_wav(wav_bytes=audio_bytes)
+        if processed is not None:
+            audio_bytes, postprocess_meta = processed
+
     play_length = round(total_duration, 2) if total_duration > 0 else None
 
     manifest = {
@@ -441,6 +555,8 @@ async def generate_and_store_story_audio(
         "play_length": play_length,
         "content_type": final_content_type,
     }
+    if postprocess_meta:
+        manifest["postprocess"] = postprocess_meta
 
     public_url = None
     manifest_url = None
