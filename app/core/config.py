@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     VOICE_CLONE_MAX_FILE_SECONDS: float = 180.0
     VOICE_CLONE_MIN_TOTAL_SECONDS: float = 15.0
     VOICE_CLONE_TARGET_SAMPLE_RATE: int = 44100
+    VOICE_CLONE_MIN_RMS_RATIO: float = 0.005
+    VOICE_CLONE_AUTO_GAIN_QUIET_AUDIO: bool = True
 
     # Stripe (subscription paywall: 7-day trial, monthly and annual plans)
     STRIPE_SECRET_KEY: str = ""

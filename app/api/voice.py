@@ -145,6 +145,47 @@ def _normalize_clone_audio(filename: str, content: bytes) -> tuple[str, bytes, s
     if shutil.which("ffmpeg") is None:
         return filename, content, "application/octet-stream", {"normalized": False, "normalization_reason": "ffmpeg_unavailable"}
 
+    def _ffmpeg_to_wav(audio_filter: str | None = None) -> tuple[str, bytes, str, dict]:
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-ac",
+            "1",
+            "-ar",
+            str(settings.VOICE_CLONE_TARGET_SAMPLE_RATE),
+        ]
+        if audio_filter:
+            command.extend(["-af", audio_filter])
+        command.append(output_path)
+
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 0:
+            logging.warning(
+                "ffmpeg normalization failed for %s: %s",
+                filename,
+                completed.stderr.decode("utf-8", "ignore"),
+            )
+            return filename, content, "application/octet-stream", {
+                "normalized": False,
+                "normalization_reason": "ffmpeg_failed",
+            }
+
+        with open(output_path, "rb") as normalized:
+            normalized_bytes = normalized.read()
+        normalized_name = f"{os.path.splitext(filename or 'audio')[0]}.wav"
+        return normalized_name, normalized_bytes, "audio/wav", {
+            "normalized": True,
+            "target_sample_rate": settings.VOICE_CLONE_TARGET_SAMPLE_RATE,
+            "audio_filter": audio_filter,
+        }
+
     input_suffix = os.path.splitext(filename or "audio")[1] or ".bin"
     input_path = None
     output_path = None
@@ -155,33 +196,33 @@ def _normalize_clone_audio(filename: str, content: bytes) -> tuple[str, bytes, s
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as dst:
             output_path = dst.name
 
-        completed = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_path,
-                "-ac",
-                "1",
-                "-ar",
-                str(settings.VOICE_CLONE_TARGET_SAMPLE_RATE),
-                output_path,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if completed.returncode != 0:
-            logging.warning("ffmpeg normalization failed for %s: %s", filename, completed.stderr.decode("utf-8", "ignore"))
-            return filename, content, "application/octet-stream", {"normalized": False, "normalization_reason": "ffmpeg_failed"}
+        normalized_name, normalized_bytes, normalized_type, normalization_meta = _ffmpeg_to_wav()
+        if not normalization_meta.get("normalized"):
+            return normalized_name, normalized_bytes, normalized_type, normalization_meta
 
-        with open(output_path, "rb") as normalized:
-            normalized_bytes = normalized.read()
-        normalized_name = f"{os.path.splitext(filename or 'audio')[0]}.wav"
-        return normalized_name, normalized_bytes, "audio/wav", {
-            "normalized": True,
-            "target_sample_rate": settings.VOICE_CLONE_TARGET_SAMPLE_RATE,
-        }
+        metrics = _analyze_wav_bytes(normalized_bytes)
+        rms_ratio = metrics.get("rms_ratio")
+        normalization_meta["pre_gain_rms_ratio"] = rms_ratio
+
+        if (
+            settings.VOICE_CLONE_AUTO_GAIN_QUIET_AUDIO
+            and rms_ratio is not None
+            and rms_ratio < settings.VOICE_CLONE_MIN_RMS_RATIO
+        ):
+            boosted_name, boosted_bytes, boosted_type, boosted_meta = _ffmpeg_to_wav(
+                audio_filter="loudnorm=I=-20:TP=-2:LRA=7",
+            )
+            if boosted_meta.get("normalized"):
+                boosted_metrics = _analyze_wav_bytes(boosted_bytes)
+                boosted_rms_ratio = boosted_metrics.get("rms_ratio")
+                normalization_meta["post_gain_rms_ratio"] = boosted_rms_ratio
+                if boosted_rms_ratio is not None and boosted_rms_ratio > rms_ratio:
+                    boosted_meta["auto_gain_applied"] = True
+                    boosted_meta["pre_gain_rms_ratio"] = rms_ratio
+                    boosted_meta["post_gain_rms_ratio"] = boosted_rms_ratio
+                    return boosted_name, boosted_bytes, boosted_type, boosted_meta
+
+        return normalized_name, normalized_bytes, normalized_type, normalization_meta
     finally:
         for path in (input_path, output_path):
             if path and os.path.exists(path):
@@ -216,8 +257,14 @@ def _prepare_clone_file(upload: UploadFile, content: bytes) -> tuple[tuple[str, 
         diagnostics.update(wav_metrics)
         rms_ratio = wav_metrics.get("rms_ratio")
         peak_ratio = wav_metrics.get("peak_ratio")
-        if rms_ratio is not None and rms_ratio < 0.01:
-            raise HTTPException(status_code=400, detail=f"Audio file '{filename}' is too quiet or silent for cloning.")
+        if rms_ratio is not None and rms_ratio < settings.VOICE_CLONE_MIN_RMS_RATIO:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Audio file '{filename}' is too quiet or silent for cloning. "
+                    "Please record closer to the mic or speak louder."
+                ),
+            )
         if peak_ratio is not None and peak_ratio >= 0.99:
             diagnostics["possible_clipping"] = True
 
