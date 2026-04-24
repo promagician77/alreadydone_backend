@@ -48,6 +48,14 @@ def _format_text_for_tts(text: str) -> str:
     s = re.sub(r'<break\s+time\s*=\s*\\?"[^"]*\\?"\s*/?\s*>', "", s)
     s = re.sub(r"\s+", " ", s).strip()
 
+    # Prevent TTS from treating common title abbreviations as sentence breaks.
+    # This also avoids SSML break insertion after these periods later.
+    s = re.sub(r"\bMr\.\b", "Mister", s)
+    s = re.sub(r"\bMrs\.\b", "Misses", s)
+    s = re.sub(r"\bMs\.\b", "Miss", s)
+    s = re.sub(r"\bDr\.\b", "Doctor", s)
+    s = re.sub(r"\bSt\.\b", "Saint", s)
+
     # Normalize double-dashes to em dash
     s = re.sub(r"\s*--\s*", " — ", s)
     # Normalize em dash spacing

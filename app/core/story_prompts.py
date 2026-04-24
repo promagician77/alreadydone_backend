@@ -75,26 +75,14 @@ PACING FOR VOICE:
 - Build rhythm: short, short, medium, short
 - Let emotions breathe (don't rush the feeling)
 
-CRITICAL AUDIO PACING INSTRUCTIONS:
-- After every sentence, add THREE line breaks (not just one).
-- After every period, insert: ".   " (period + THREE spaces).
-- Between paragraphs, add FIVE line breaks.
-- Use commas frequently for natural pauses. Add ellipses (...) for dramatic pauses and em dashes (—) for longer pauses.
+CRITICAL AUDIO / TTS COMPATIBILITY:
+- Do NOT insert extra spaces after periods.
+- Do NOT add multiple blank lines between sentences or paragraphs.
+- Avoid ellipses (...) and em dashes (—); they often create awkwardly long pauses in audio.
+- Avoid abbreviations with periods like "Mr.", "Mrs.", "Dr.", "St." — spell them out (Mister, Misses, Doctor, Saint) to prevent long pauses.
+- Keep pacing natural using normal punctuation only (periods and commas).
 - Maximum sentence length: 20 words.
 - Narration only. Never write bracketed sound cues, onomatopoeia, or background sound-effect instructions.
-
-Use this exact formatting:
-Sentence one ends here.   
-
-Sentence two starts here.   
-
-Sentence three is next.   
-
-
-New paragraph starts here.   
-
-
-This creates natural pauses when converted to audio.
 
 STORY EVOLUTION (Based on Story Count):
 - Story 1-2: Focus on IMMEDIATE experience of completed desire

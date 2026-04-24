@@ -63,26 +63,14 @@ FORBIDDEN:
 
 TONE: Optimistic, exhilarating, sensory-rich, emotionally resonant, grateful, joyful, confident, abundant.
 
-CRITICAL AUDIO PACING INSTRUCTIONS:
-- After every sentence, add THREE line breaks (not just one).
-- After every period, insert: ".   " (period + THREE spaces).
-- Between paragraphs, add FIVE line breaks.
-- Use commas frequently for natural pauses. Add ellipses (...) for dramatic pauses and em dashes (—) for longer pauses.
+CRITICAL AUDIO / TTS COMPATIBILITY:
+- Do NOT insert extra spaces after periods.
+- Do NOT add multiple blank lines between sentences or paragraphs.
+- Avoid ellipses (...) and em dashes (—); they often create awkwardly long pauses in audio.
+- Avoid abbreviations with periods like "Mr.", "Mrs.", "Dr.", "St." — spell them out (Mister, Misses, Doctor, Saint) to prevent long pauses.
+- Keep pacing natural using normal punctuation only (periods and commas).
 - Maximum sentence length: 20 words.
 - Narration only. Do not include anything that should be heard as a separate sound effect instead of spoken words.
-
-Use this exact formatting:
-Sentence one ends here.   
-
-Sentence two starts here.   
-
-Sentence three is next.   
-
-
-New paragraph starts here.   
-
-
-This creates natural pauses when converted to audio.
 
 WRITE ENTIRELY IN FIRST PERSON PAST TENSE. End with the phrase: "Already done."
 """
