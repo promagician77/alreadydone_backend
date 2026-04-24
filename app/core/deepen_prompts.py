@@ -67,6 +67,8 @@ CRITICAL AUDIO / TTS COMPATIBILITY:
 - Do NOT insert extra spaces after periods.
 - Do NOT add multiple blank lines between sentences or paragraphs.
 - Avoid ellipses (...) and em dashes (—); they often create awkwardly long pauses in audio.
+- Hyphens next to numbers break TTS (e.g. "47-million" can sound like a drawn-out "forty" then "seven"). Never put a hyphen immediately after digits. Write amounts in plain form: "47 million", "forty seven million", or fully spelled compound numbers with a space before the unit ("forty seven million dollars"). Prefer words or spaces over hyphens in money and large numbers.
+- Avoid unnecessary hyphens in narration; rephrase compounds with "and" or a short phrase instead of stacked hyphenated words.
 - Avoid abbreviations with periods like "Mr.", "Mrs.", "Dr.", "St." — spell them out (Mister, Misses, Doctor, Saint) to prevent long pauses.
 - Keep pacing natural using normal punctuation only (periods and commas).
 - Maximum sentence length: 20 words.
