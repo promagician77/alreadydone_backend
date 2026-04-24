@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.claude import generate_story, generate_deepen_story
 from app.core.config import CATEGORIES, ENERGY_WORDS
 from app.core.db_utils import safe_partial_update
-from app.core.story_audio import generate_and_store_story_audio
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -338,15 +337,8 @@ async def deepen_story(body: DeepenStoryRequest):
         except Exception:
             logging.exception("Failed to persist deepening generation metadata for story %s", new_story_id)
 
-    # Generate audio using original story's voice_id (same as generate_audio endpoint)
-    if new_story_id and orig_voice_id:
-        try:
-            await generate_and_store_story_audio(
-                story_id=new_story_id,
-                voice_id=orig_voice_id,
-            )
-        except Exception as e:
-            logging.warning("Auto-generate audio for deepening story %s failed: %s", new_story_id, e)
+    # Audio: do not block the HTTP response on TTS (avoids nginx/client timeouts). The mobile app
+    # calls POST /api/voice/... generate after deepen; other clients should do the same.
 
     return {
         "id": new_story_id,
