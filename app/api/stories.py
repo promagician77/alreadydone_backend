@@ -1,7 +1,8 @@
 """Stories endpoint: list stories for a user; generate story theme and story via Claude."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
@@ -106,6 +107,61 @@ def _is_user_subscribed(user_row: dict | None) -> bool:
     return rc_status == "active" or rc_status == "trial"
 
 
+def _tzinfo_from_user_timezone(value: str | None):
+    """
+    Convert a user-provided timezone string into tzinfo.
+
+    Supported:
+    - IANA timezone IDs (e.g. "America/New_York")
+    - Fixed offsets like "UTC+02:00", "UTC-05:30"
+
+    Fallback: UTC
+    """
+    v = (value or "").strip()
+    if not v:
+        return timezone.utc
+
+    # Fixed offset format "UTC+HH:MM" or "UTC-HH:MM"
+    if v.upper().startswith("UTC") and len(v) >= 4:
+        rest = v[3:].strip()
+        if rest:
+            sign = rest[0]
+            if sign in {"+", "-"}:
+                hm = rest[1:]
+                if ":" in hm:
+                    h_s, m_s = hm.split(":", 1)
+                else:
+                    h_s, m_s = hm, "0"
+                try:
+                    hours = int(h_s)
+                    minutes = int(m_s)
+                    if 0 <= hours <= 23 and 0 <= minutes <= 59:
+                        delta = timedelta(hours=hours, minutes=minutes)
+                        if sign == "-":
+                            delta = -delta
+                        return timezone(delta)
+                except ValueError:
+                    pass
+
+    # IANA timezone
+    try:
+        return ZoneInfo(v)
+    except ZoneInfoNotFoundError:
+        return timezone.utc
+    except Exception:
+        return timezone.utc
+
+
+def _today_start_utc_iso_for_user(user_timezone: str | None) -> str:
+    """
+    Return ISO timestamp (UTC, Z-suffix) for the start of "today" in the user's local timezone.
+    """
+    tz = _tzinfo_from_user_timezone(user_timezone)
+    local_midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    utc_midnight = local_midnight.astimezone(timezone.utc)
+    return utc_midnight.isoformat().replace("+00:00", "Z")
+
+
 def _get_desire_id_by_name(supabase, category: str) -> int:
     """Look up Desires.id by Desires.desireCategory. Raises if not found."""
     r = supabase.table("Desires").select("id").eq("desireCategory", category).execute()
@@ -141,13 +197,13 @@ async def generate_story_content(body: GenerateStoryRequest):
 
     supabase = get_supabase()
 
-    # Non-subscribers: limit to 1 story per day (UTC). RevenueCat subscribed (rc_subscription_status = active) get unlimited.
-    user_row = supabase.table("Users").select("rc_subscription_status").eq("id", user_id).execute()
+    # Non-subscribers: limit to 1 story per day (user's local timezone). RevenueCat subscribed get unlimited.
+    user_row = supabase.table("Users").select("rc_subscription_status,timezone").eq("id", user_id).execute()
     user_data = (user_row.data or [])
     user_record = user_data[0] if user_data else None
     is_subscribed = _is_user_subscribed(user_record)
     if not is_subscribed:
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+        today_start = _today_start_utc_iso_for_user((user_record or {}).get("timezone"))
         r_today = supabase.table("Stories").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_start).or_("is_deleted.eq.false,is_deleted.is.null").execute()
         count_today = getattr(r_today, "count", None)
         if count_today is None:
@@ -267,13 +323,13 @@ async def deepen_story(body: DeepenStoryRequest):
     previous_story_text = (deepen_rows[-1].get("story") or "").strip() if deepen_rows else root_story_text
     deepening_count = len(deepen_rows) + 1
 
-    # Same subscription limit as generate: free = 1 story per day (UTC); RevenueCat subscribed = unlimited
-    user_row = supabase.table("Users").select("rc_subscription_status").eq("id", user_id).execute()
+    # Same subscription limit as generate: free = 1 story per day (user's local timezone); RevenueCat subscribed = unlimited
+    user_row = supabase.table("Users").select("rc_subscription_status,timezone").eq("id", user_id).execute()
     user_data = (user_row.data or [])
     user_record = user_data[0] if user_data else None
     is_subscribed = _is_user_subscribed(user_record)
     if not is_subscribed:
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+        today_start = _today_start_utc_iso_for_user((user_record or {}).get("timezone"))
         r_today = supabase.table("Stories").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_start).or_("is_deleted.eq.false,is_deleted.is.null").execute()
         count_today = getattr(r_today, "count", None)
         if count_today is None:
