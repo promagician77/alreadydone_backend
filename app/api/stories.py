@@ -22,6 +22,7 @@ class GenerateStoryRequest(BaseModel):
     desireCategory: str = Field(..., description="Category: Love, Money, Career, Health, Home")
     desireDescription: str = Field(..., min_length=1, description="User's description, past tense")
     lovedOne: str | None = Field(None, description="Someone they love (optional)")
+    timezone: str | None = Field(None, description="User's local IANA timezone, e.g. America/New_York")
 
     @model_validator(mode="after")
     def check_energy_and_category(self):
@@ -41,6 +42,7 @@ class DeepenStoryRequest(BaseModel):
     location: str = Field(..., min_length=1, description="Where their dream life takes place (city or country)")
     energyWord: str = Field(..., description="Energy word: Powerful, Peaceful, Abundant, Grateful, Confident")
     lovedOne: str | None = Field(None, description="Someone they love (optional)")
+    timezone: str | None = Field(None, description="User's local IANA timezone, e.g. America/New_York")
 
     @model_validator(mode="after")
     def check_energy(self):
@@ -99,29 +101,16 @@ async def delete_story(
     return {"ok": True, "story_id": story_id}
 
 
-def _is_user_subscribed(user_row: dict | None) -> bool:
-    """True if user has an active RevenueCat subscription (rc_subscription_status = active). Only subscribed users can generate more than 1 story per day."""
-    if not user_row:
-        return False
-    rc_status = (user_row.get("rc_subscription_status") or user_row.get("rc_subscription_Status") or "").strip().lower()
-    return rc_status == "active" or rc_status == "trial"
-
-
 def _tzinfo_from_user_timezone(value: str | None):
-    """
-    Convert a user-provided timezone string into tzinfo.
-
-    Supported:
-    - IANA timezone IDs (e.g. "America/New_York")
-    - Fixed offsets like "UTC+02:00", "UTC-05:30"
-
-    Fallback: UTC
-    """
+    """Convert an IANA timezone or UTC offset string into tzinfo; fall back to UTC."""
     v = (value or "").strip()
     if not v:
-        return timezone.utc
+        logging.info("[stories.limit] no timezone provided; falling back to UTC")
+        return timezone.utc, "UTC"
 
-    # Fixed offset format "UTC+HH:MM" or "UTC-HH:MM"
+    if v.upper() == "UTC":
+        return timezone.utc, "UTC"
+
     if v.upper().startswith("UTC") and len(v) >= 4:
         rest = v[3:].strip()
         if rest:
@@ -139,27 +128,114 @@ def _tzinfo_from_user_timezone(value: str | None):
                         delta = timedelta(hours=hours, minutes=minutes)
                         if sign == "-":
                             delta = -delta
-                        return timezone(delta)
+                        return timezone(delta), v
                 except ValueError:
                     pass
 
-    # IANA timezone
     try:
-        return ZoneInfo(v)
+        return ZoneInfo(v), v
     except ZoneInfoNotFoundError:
-        return timezone.utc
+        logging.info("[stories.limit] invalid timezone=%r; falling back to UTC", v)
+        return timezone.utc, "UTC"
     except Exception:
-        return timezone.utc
+        logging.exception("[stories.limit] failed to resolve timezone=%r; falling back to UTC", v)
+        return timezone.utc, "UTC"
 
 
-def _today_start_utc_iso_for_user(user_timezone: str | None) -> str:
-    """
-    Return ISO timestamp (UTC, Z-suffix) for the start of "today" in the user's local timezone.
-    """
-    tz = _tzinfo_from_user_timezone(user_timezone)
-    local_midnight = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    utc_midnight = local_midnight.astimezone(timezone.utc)
-    return utc_midnight.isoformat().replace("+00:00", "Z")
+def _local_day_window_utc(user_timezone: str | None) -> tuple[str, str, str]:
+    """Return UTC ISO bounds for the current day in the user's local timezone."""
+    tz, resolved_timezone = _tzinfo_from_user_timezone(user_timezone)
+    now_utc = datetime.now(timezone.utc)
+    local_now = now_utc.astimezone(tz)
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_end = local_start + timedelta(days=1)
+    start_utc = local_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    end_utc = local_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    logging.info(
+        "[stories.limit] timezone=%s local_now=%s start_utc=%s end_utc=%s",
+        resolved_timezone,
+        local_now.isoformat(),
+        start_utc,
+        end_utc,
+    )
+    return start_utc, end_utc, resolved_timezone
+
+
+def _get_user_timezone(supabase, user_id: int, request_timezone: str | None = None) -> tuple[str | None, dict | None]:
+    """Prefer request/device timezone, persist it if valid, and fall back to stored profile timezone."""
+    user_row = supabase.table("Users").select("timezone").eq("id", user_id).execute()
+    user_data = list(user_row.data or [])
+    user_record = user_data[0] if user_data else None
+    stored_timezone = (user_record or {}).get("timezone")
+    request_timezone = (request_timezone or "").strip() or None
+    stored_timezone_clean = (stored_timezone or "").strip() or None
+
+    if request_timezone:
+        _, resolved = _tzinfo_from_user_timezone(request_timezone)
+        if resolved != "UTC" or request_timezone.upper() == "UTC":
+            if request_timezone != stored_timezone_clean:
+                try:
+                    supabase.table("Users").update({"timezone": request_timezone}).eq("id", user_id).execute()
+                    logging.info(
+                        "[stories.limit] persisted timezone user_id=%s timezone=%s previous=%s",
+                        user_id,
+                        request_timezone,
+                        stored_timezone_clean,
+                    )
+                except Exception:
+                    logging.exception("[stories.limit] failed to persist timezone user_id=%s", user_id)
+            return request_timezone, user_record
+        logging.info("[stories.limit] request timezone invalid user_id=%s timezone=%r", user_id, request_timezone)
+
+    return stored_timezone_clean, user_record
+
+
+def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | None = None, source: str = "generate") -> None:
+    """All users can create at most one story/deepening per local calendar day."""
+    user_timezone, _ = _get_user_timezone(supabase, user_id, request_timezone)
+    today_start, tomorrow_start, resolved_timezone = _local_day_window_utc(user_timezone)
+    r_today = (
+        supabase.table("Stories")
+        .select("id", count="exact")
+        .eq("user_id", user_id)
+        .gte("created_at", today_start)
+        .lt("created_at", tomorrow_start)
+        .execute()
+    )
+    count_today = getattr(r_today, "count", None)
+    if count_today is None:
+        count_today = len(r_today.data or []) if r_today.data is not None else 0
+    logging.info(
+        "[stories.limit] source=%s user_id=%s request_timezone=%s resolved_timezone=%s count_today=%s window=[%s,%s)",
+        source,
+        user_id,
+        request_timezone,
+        resolved_timezone,
+        count_today,
+        today_start,
+        tomorrow_start,
+    )
+    if (count_today or 0) >= 1:
+        logging.info(
+            "[stories.limit] blocked source=%s user_id=%s resolved_timezone=%s next_reset_utc=%s",
+            source,
+            user_id,
+            resolved_timezone,
+            tomorrow_start,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Users can generate up to 1 story per day. "
+                f"Your day resets at midnight in {resolved_timezone}."
+            ),
+        )
+    logging.info(
+        "[stories.limit] allowed source=%s user_id=%s resolved_timezone=%s",
+        source,
+        user_id,
+        resolved_timezone,
+    )
 
 
 def _get_desire_id_by_name(supabase, category: str) -> int:
@@ -181,10 +257,11 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
     logging.info(
-        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s",
+        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s request_timezone=%s",
         body.user_id,
         body.energyWord,
         body.desireCategory,
+        body.timezone,
     )
     # Match variable names to GenerateStoryRequest field names (self.user_id, self.name, ...)
     user_id = body.user_id
@@ -197,22 +274,7 @@ async def generate_story_content(body: GenerateStoryRequest):
 
     supabase = get_supabase()
 
-    # Non-subscribers: limit to 1 story per day (user's local timezone). RevenueCat subscribed get unlimited.
-    user_row = supabase.table("Users").select("rc_subscription_status,timezone").eq("id", user_id).execute()
-    user_data = (user_row.data or [])
-    user_record = user_data[0] if user_data else None
-    is_subscribed = _is_user_subscribed(user_record)
-    if not is_subscribed:
-        today_start = _today_start_utc_iso_for_user((user_record or {}).get("timezone"))
-        r_today = supabase.table("Stories").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_start).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        count_today = getattr(r_today, "count", None)
-        if count_today is None:
-            count_today = len(r_today.data or []) if r_today.data is not None else 0
-        if (count_today or 0) >= 1:
-            raise HTTPException(
-                status_code=403,
-                detail="Free users can generate up to 1 story per day. Subscribe for unlimited stories.",
-            )
+    _enforce_daily_story_limit(supabase, user_id, body.timezone, source="generate")
 
     desire_id = _get_desire_id_by_name(supabase, desireCategory)
     r = supabase.table("Stories").select("id", "theme", count="exact").eq("user_id", user_id).eq("desire_id", desire_id).or_("is_deleted.eq.false,is_deleted.is.null").order("id").execute()
@@ -278,6 +340,12 @@ async def generate_story_content(body: GenerateStoryRequest):
 @router.post("/deepen")
 async def deepen_story(body: DeepenStoryRequest):
     """Generate a deepening continuation of an existing story. Requires Stories.parent_story_id and Stories.deepening_level columns."""
+    logging.info(
+        "[stories.deepen] start user_id=%s story_id=%s request_timezone=%s",
+        body.user_id,
+        body.story_id,
+        body.timezone,
+    )
     supabase = get_supabase()
     user_id = body.user_id
     story_id = body.story_id
@@ -323,22 +391,7 @@ async def deepen_story(body: DeepenStoryRequest):
     previous_story_text = (deepen_rows[-1].get("story") or "").strip() if deepen_rows else root_story_text
     deepening_count = len(deepen_rows) + 1
 
-    # Same subscription limit as generate: free = 1 story per day (user's local timezone); RevenueCat subscribed = unlimited
-    user_row = supabase.table("Users").select("rc_subscription_status,timezone").eq("id", user_id).execute()
-    user_data = (user_row.data or [])
-    user_record = user_data[0] if user_data else None
-    is_subscribed = _is_user_subscribed(user_record)
-    if not is_subscribed:
-        today_start = _today_start_utc_iso_for_user((user_record or {}).get("timezone"))
-        r_today = supabase.table("Stories").select("id", count="exact").eq("user_id", user_id).gte("created_at", today_start).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        count_today = getattr(r_today, "count", None)
-        if count_today is None:
-            count_today = len(r_today.data or []) if r_today.data is not None else 0
-        if (count_today or 0) >= 1:
-            raise HTTPException(
-                status_code=403,
-                detail="Free users can generate up to 1 story per day. Subscribe for unlimited stories.",
-            )
+    _enforce_daily_story_limit(supabase, user_id, body.timezone, source="deepen")
 
     try:
         theme, story, generation_meta = await generate_deepen_story(
