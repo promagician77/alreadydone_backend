@@ -200,6 +200,7 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
         .eq("user_id", user_id)
         .gte("created_at", today_start)
         .lt("created_at", tomorrow_start)
+        .or_("is_deleted.eq.false,is_deleted.is.null")
         .execute()
     )
     count_today = getattr(r_today, "count", None)
@@ -216,13 +217,6 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
         tomorrow_start,
     )
     if (count_today or 0) >= 1:
-        logging.info(
-            "[stories.limit] blocked source=%s user_id=%s resolved_timezone=%s next_reset_utc=%s",
-            source,
-            user_id,
-            resolved_timezone,
-            tomorrow_start,
-        )
         raise HTTPException(
             status_code=403,
             detail=(
@@ -230,12 +224,6 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
                 f"Your day resets at midnight in {resolved_timezone}."
             ),
         )
-    logging.info(
-        "[stories.limit] allowed source=%s user_id=%s resolved_timezone=%s",
-        source,
-        user_id,
-        resolved_timezone,
-    )
 
 
 def _get_desire_id_by_name(supabase, category: str) -> int:
@@ -257,11 +245,10 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
     logging.info(
-        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s request_timezone=%s",
+        "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s",
         body.user_id,
         body.energyWord,
         body.desireCategory,
-        body.timezone,
     )
     # Match variable names to GenerateStoryRequest field names (self.user_id, self.name, ...)
     user_id = body.user_id
@@ -340,12 +327,6 @@ async def generate_story_content(body: GenerateStoryRequest):
 @router.post("/deepen")
 async def deepen_story(body: DeepenStoryRequest):
     """Generate a deepening continuation of an existing story. Requires Stories.parent_story_id and Stories.deepening_level columns."""
-    logging.info(
-        "[stories.deepen] start user_id=%s story_id=%s request_timezone=%s",
-        body.user_id,
-        body.story_id,
-        body.timezone,
-    )
     supabase = get_supabase()
     user_id = body.user_id
     story_id = body.story_id
