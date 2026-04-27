@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import json as _json
 import wave
 import math
 import struct
@@ -26,6 +27,29 @@ except ImportError:
     MutagenFile = None
 
 router = APIRouter(prefix="/voice", tags=["voice"])
+
+# region agent log
+_DEBUG_LOG_PATH = "/home/sebastian/Documents/Already/.cursor/debug-7a5035.log"
+_DEBUG_SESSION_ID = "7a5035"
+
+
+def _agent_log(*, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": _DEBUG_SESSION_ID,
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+# endregion agent log
 
 
 def _raise_http_from_httpx(e: BaseException) -> None:
@@ -434,6 +458,20 @@ async def get_story_play_url(story_id: int):
 @router.post("/generate_audio")
 async def speak(request: SpeakRequest):
     """Get story text from Stories by story_id; return existing playUrl if already played, else TTS, store, return URL."""
+    started_at = time.perf_counter()
+    _agent_log(
+        hypothesis_id="A",
+        location="app/api/voice.py:generate_audio:entry",
+        message="generate_audio request start",
+        data={
+            "storyId": request.story_id,
+            "hasVoiceId": bool((request.voice_id or "").strip()),
+            "modelId": request.model_id,
+            "hasOutputFormat": request.output_format is not None,
+            "hasSeed": request.seed is not None,
+            "hasVoiceSettings": request.voice_settings is not None,
+        },
+    )
     try:
         result = await generate_and_store_story_audio(
             story_id=request.story_id,
@@ -444,7 +482,29 @@ async def speak(request: SpeakRequest):
             voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
         )
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        _agent_log(
+            hypothesis_id="E",
+            location="app/api/voice.py:generate_audio:httpx_error",
+            message="generate_audio httpx error (voice provider or dependency)",
+            data={
+                "storyId": request.story_id,
+                "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+                "errorType": type(e).__name__,
+            },
+        )
         _raise_http_from_httpx(e)
+    except Exception as e:
+        _agent_log(
+            hypothesis_id="A",
+            location="app/api/voice.py:generate_audio:exception",
+            message="generate_audio exception",
+            data={
+                "storyId": request.story_id,
+                "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+                "errorType": type(e).__name__,
+            },
+        )
+        raise
     if result is None:
         supabase = get_supabase()
         r = supabase.table("Stories").select("id", "story").eq("id", request.story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
@@ -453,5 +513,17 @@ async def speak(request: SpeakRequest):
             status_code=404 if not rows else 400,
             detail="Story not found or has no story text",
         )
+    _agent_log(
+        hypothesis_id="A",
+        location="app/api/voice.py:generate_audio:success",
+        message="generate_audio request success",
+        data={
+            "storyId": request.story_id,
+            "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+            "hasUrl": bool((result.get("url") or "").strip()),
+            "contentType": result.get("content_type"),
+            "metrics": result.get("metrics"),
+        },
+    )
     return {"url": result["url"], "content_type": result["content_type"]}
     # return {"format_text": result["format_text"], "text_with_breaks": result["text_with_breaks"]}

@@ -225,7 +225,6 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
             ),
         )
 
-
 def _get_desire_id_by_name(supabase, category: str) -> int:
     """Look up Desires.id by Desires.desireCategory. Raises if not found."""
     r = supabase.table("Desires").select("id").eq("desireCategory", category).execute()

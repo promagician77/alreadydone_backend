@@ -28,6 +28,29 @@ except ImportError:
 MAX_SENTENCE_WORDS = 20
 SENTENCES_PER_PARAGRAPH = (3, 4)
 
+# region agent log
+_DEBUG_LOG_PATH = "/home/sebastian/Documents/Already/.cursor/debug-7a5035.log"
+_DEBUG_SESSION_ID = "7a5035"
+
+
+def _agent_log(*, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": _DEBUG_SESSION_ID,
+            "runId": "pre-fix",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+# endregion agent log
+
 
 def _format_text_for_tts(text: str) -> str:
     """
@@ -316,6 +339,21 @@ async def generate_and_store_story_audio(
     """
     generation_started_at = time.perf_counter()
     logging.info("Generate story audio for story_id=%s voice_id=%s", story_id, voice_id)
+    _agent_log(
+        hypothesis_id="A",
+        location="app/core/story_audio.py:generate_and_store_story_audio:start",
+        message="audio generation start",
+        data={
+            "storyId": story_id,
+            "hasVoiceId": bool((voice_id or "").strip()),
+            "modelId": model_id,
+            "hasTextOverride": bool((text or "").strip()),
+            "hasVoiceSettings": voice_settings is not None,
+            "outputFormat": output_format,
+            "seedProvided": seed is not None,
+            "auphonicEnabled": bool(settings.AUPHONIC_ENABLED),
+        },
+    )
     if not text or not text.strip():
         supabase = get_supabase()
         response = supabase.table("Stories").select("story").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
@@ -331,6 +369,16 @@ async def generate_and_store_story_audio(
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", formatted_text) if p.strip()]
     if not paragraphs:
         return None
+    _agent_log(
+        hypothesis_id="D",
+        location="app/core/story_audio.py:generate_and_store_story_audio:chunks",
+        message="prepared TTS chunks",
+        data={
+            "storyId": story_id,
+            "chunkCount": len(paragraphs),
+            "totalChars": len(narration_script),
+        },
+    )
 
     selected_output_format = output_format or settings.ELEVENLABS_TTS_OUTPUT_FORMAT
     request_voice_settings = default_voice_settings()
@@ -413,6 +461,16 @@ async def generate_and_store_story_audio(
                 }
             )
     except Exception as exc:
+        _agent_log(
+            hypothesis_id="D",
+            location="app/core/story_audio.py:generate_and_store_story_audio:tts_exception",
+            message="TTS loop exception",
+            data={
+                "storyId": story_id,
+                "elapsedMs": round((time.perf_counter() - generation_started_at) * 1000, 2),
+                "errorType": type(exc).__name__,
+            },
+        )
         try:
             safe_partial_update(
                 table_name="Stories",
@@ -443,6 +501,18 @@ async def generate_and_store_story_audio(
         file_ext = _extension_for_content_type(final_content_type)
 
     tts_processing_ms = round((time.perf_counter() - tts_started_at) * 1000, 2)
+    _agent_log(
+        hypothesis_id="D",
+        location="app/core/story_audio.py:generate_and_store_story_audio:tts_done",
+        message="TTS done (all chunks)",
+        data={
+            "storyId": story_id,
+            "ttsProcessingMs": tts_processing_ms,
+            "bytesBeforePostprocess": len(audio_bytes) if "audio_bytes" in locals() else None,
+            "finalContentTypeBeforePostprocess": final_content_type,
+            "chunkCount": len(paragraphs),
+        },
+    )
     play_length = round(total_duration, 2) if total_duration > 0 else None
     postprocess_metadata = {
         "provider": "auphonic",
@@ -487,6 +557,18 @@ async def generate_and_store_story_audio(
                 "error": str(exc),
                 "fallback_reason": str(exc),
             }
+    _agent_log(
+        hypothesis_id="B",
+        location="app/core/story_audio.py:generate_and_store_story_audio:postprocess_done",
+        message="postprocess done (auphonic or skipped)",
+        data={
+            "storyId": story_id,
+            "applied": bool(postprocess_metadata.get("applied")),
+            "postprocessMs": postprocess_metadata.get("processing_ms"),
+            "finalContentType": final_content_type,
+            "finalBytes": len(audio_bytes),
+        },
+    )
 
     processing_metrics = {
         "tts_processing_ms": tts_processing_ms,
@@ -575,6 +657,16 @@ async def generate_and_store_story_audio(
                 },
             )
         except Exception as exc:
+            _agent_log(
+                hypothesis_id="C",
+                location="app/core/story_audio.py:generate_and_store_story_audio:upload_exception",
+                message="Supabase upload/update exception",
+                data={
+                    "storyId": story_id,
+                    "elapsedMs": round((time.perf_counter() - generation_started_at) * 1000, 2),
+                    "errorType": type(exc).__name__,
+                },
+            )
             logging.exception("Supabase storage upload failed for story %s: %s", story_id, exc)
             try:
                 safe_partial_update(
@@ -597,6 +689,21 @@ async def generate_and_store_story_audio(
                 except OSError:
                     pass
 
+    _agent_log(
+        hypothesis_id="A",
+        location="app/core/story_audio.py:generate_and_store_story_audio:done",
+        message="audio generation done",
+        data={
+            "storyId": story_id,
+            "totalMs": round((time.perf_counter() - generation_started_at) * 1000, 2),
+            "hasUrl": bool((public_url or "").strip()) if public_url is not None else False,
+            "contentType": final_content_type,
+            "metrics": {
+                **processing_metrics,
+                "audio_generation_total_ms": total_generation_ms,
+            },
+        },
+    )
     return {
         "url": public_url,
         "content_type": final_content_type,
