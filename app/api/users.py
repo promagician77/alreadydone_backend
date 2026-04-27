@@ -114,8 +114,6 @@ async def get_user_info(user_id: int):
 
 
 class UserUpdateRequest(BaseModel):
-    """Body for updating user settings. Only provided fields are updated."""
-
     speed: str | None = Field(None, description="Speed (text)")
     morningTime_Reminder: datetime | None = Field(None, description="Morning reminder time (ISO datetime)")
     bedTime_Reminder: datetime | None = Field(None, description="Bedtime reminder time (ISO datetime)")
@@ -130,7 +128,6 @@ class UserUpdateRequest(BaseModel):
     sleepTime: int | None = Field(None, description="User's sleep time (minutes)")
     fcm_token: str | None = Field(None, description="FCM device token for push notifications")
     timezone: str | None = Field(None, description="IANA timezone (e.g. America/Los_Angeles) for reminder times")
-    # RevenueCat / alternate subscription provider
     rc_customer_id: str | None = Field(None, description="RevenueCat customer ID")
     rc_subscription_status: str | None = Field(None, description="RevenueCat subscription status")
     rc_subscription_plan: str | None = Field(None, description="RevenueCat subscription plan")
@@ -138,15 +135,10 @@ class UserUpdateRequest(BaseModel):
 
 @router.patch("/{user_id}")
 async def update_user(user_id: str, body: UserUpdateRequest):
-    """
-    Update Users table: Speed, Morning_Reminder, Bedtime_Reminder.
-    Only fields present in the body are updated.
-    """
     payload = {}
     if body.speed is not None:
         payload["speed"] = body.speed
     if body.morningTime_Reminder is not None:
-        # Supabase column is timestamp (no tz); send naive "YYYY-MM-DD HH:MM:SS"
         payload["morningTime_Reminder"] = body.morningTime_Reminder.strftime("%Y-%m-%d %H:%M:%S")
     if body.bedTime_Reminder is not None:
         payload["bedTime_Reminder"] = body.bedTime_Reminder.strftime("%Y-%m-%d %H:%M:%S")
@@ -171,6 +163,7 @@ async def update_user(user_id: str, body: UserUpdateRequest):
     if body.fcm_token is not None:
         payload["fcm_token"] = body.fcm_token
     if body.timezone is not None:
+        print(f"timezone: {body.timezone}")
         payload["timezone"] = body.timezone
     if body.rc_customer_id is not None:
         payload["rc_customer_id"] = body.rc_customer_id
