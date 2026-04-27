@@ -44,6 +44,12 @@ def _agent_log(*, hypothesis_id: str, location: str, message: str, data: dict) -
             "data": data,
             "timestamp": int(time.time() * 1000),
         }
+        # Mirror to server logs so it's visible even if file logging fails.
+        logging.info("[agentlog] %s %s %s data=%s", hypothesis_id, location, message, payload.get("data"))
+        try:
+            os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+        except Exception:
+            pass
         with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
