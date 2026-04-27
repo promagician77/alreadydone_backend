@@ -143,7 +143,6 @@ def _tzinfo_from_user_timezone(value: str | None):
 
 
 def _local_day_window_utc(user_timezone: str | None) -> tuple[str, str, str]:
-    """Return UTC ISO bounds for the current day in the user's local timezone."""
     tz, resolved_timezone = _tzinfo_from_user_timezone(user_timezone)
     now_utc = datetime.now(timezone.utc)
     local_now = now_utc.astimezone(tz)
@@ -162,7 +161,6 @@ def _local_day_window_utc(user_timezone: str | None) -> tuple[str, str, str]:
 
 
 def _get_user_timezone(supabase, user_id: int, request_timezone: str | None = None) -> tuple[str | None, dict | None]:
-    """Prefer request/device timezone, persist it if valid, and fall back to stored profile timezone."""
     user_row = supabase.table("Users").select("timezone").eq("id", user_id).execute()
     user_data = list(user_row.data or [])
     user_record = user_data[0] if user_data else None
@@ -191,9 +189,10 @@ def _get_user_timezone(supabase, user_id: int, request_timezone: str | None = No
 
 
 def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | None = None, source: str = "generate") -> None:
-    """All users can create at most one story/deepening per local calendar day."""
     user_timezone, _ = _get_user_timezone(supabase, user_id, request_timezone)
     today_start, tomorrow_start, resolved_timezone = _local_day_window_utc(user_timezone)
+    print(f"today_start: {today_start}, tomorrow_start: {tomorrow_start}, resolved_timezone: {resolved_timezone}")
+    print(f"user_timezone: {user_timezone}")
     r_today = (
         supabase.table("Stories")
         .select("id", count="exact")
@@ -203,6 +202,7 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
         .or_("is_deleted.eq.false,is_deleted.is.null")
         .execute()
     )
+    print(f"r_today: {r_today}")
     count_today = getattr(r_today, "count", None)
     if count_today is None:
         count_today = len(r_today.data or []) if r_today.data is not None else 0
@@ -249,7 +249,6 @@ async def generate_story_content(body: GenerateStoryRequest):
         body.energyWord,
         body.desireCategory,
     )
-    # Match variable names to GenerateStoryRequest field names (self.user_id, self.name, ...)
     user_id = body.user_id
     name = body.name
     location = body.location
@@ -257,10 +256,11 @@ async def generate_story_content(body: GenerateStoryRequest):
     desireCategory = body.desireCategory
     desireDescription = body.desireDescription
     lovedOne = body.lovedOne
+    timezone = body.timezone
 
     supabase = get_supabase()
 
-    _enforce_daily_story_limit(supabase, user_id, body.timezone, source="generate")
+    _enforce_daily_story_limit(supabase, user_id, timezone, source="generate")
 
     desire_id = _get_desire_id_by_name(supabase, desireCategory)
     r = supabase.table("Stories").select("id", "theme", count="exact").eq("user_id", user_id).eq("desire_id", desire_id).or_("is_deleted.eq.false,is_deleted.is.null").order("id").execute()
