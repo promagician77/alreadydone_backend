@@ -144,12 +144,17 @@ def _tzinfo_from_user_timezone(value: str | None):
 
 def _local_day_window_utc(user_timezone: str | None) -> tuple[str, str, str]:
     tz, resolved_timezone = _tzinfo_from_user_timezone(user_timezone)
+    print(f"tz: {tz}, resolved_timezone: {resolved_timezone}")
     now_utc = datetime.now(timezone.utc)
+    print(f"now_utc: {now_utc}")
     local_now = now_utc.astimezone(tz)
+    print(f"local_now: {local_now}")
     local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     local_end = local_start + timedelta(days=1)
+    print(f"local_start: {local_start}, local_end: {local_end}")
     start_utc = local_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     end_utc = local_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    print(f"start_utc: {start_utc}, end_utc: {end_utc}")
     logging.info(
         "[stories.limit] timezone=%s local_now=%s start_utc=%s end_utc=%s",
         resolved_timezone,
