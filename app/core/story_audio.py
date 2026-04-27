@@ -350,6 +350,7 @@ async def generate_and_store_story_audio(
     voice_settings: dict | None = None,
     output_format: str | None = None,
     seed: int | None = None,
+    apply_postprocess: bool = True,
 ) -> dict | None:
     """
     Generate TTS for a story and store it in Supabase.
@@ -372,6 +373,7 @@ async def generate_and_store_story_audio(
             "outputFormat": output_format,
             "seedProvided": seed is not None,
             "auphonicEnabled": bool(settings.AUPHONIC_ENABLED),
+            "applyPostprocess": bool(apply_postprocess),
         },
     )
     if not text or not text.strip():
@@ -537,10 +539,11 @@ async def generate_and_store_story_audio(
     postprocess_metadata = {
         "provider": "auphonic",
         "enabled": bool(settings.AUPHONIC_ENABLED),
+        "requested": bool(apply_postprocess),
         "applied": False,
         "fallback_reason": None,
     }
-    if settings.AUPHONIC_ENABLED:
+    if settings.AUPHONIC_ENABLED and apply_postprocess:
         try:
             auphonic_result = await process_audio_with_auphonic(
                 audio_bytes=audio_bytes,

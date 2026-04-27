@@ -8,10 +8,11 @@ import json as _json
 import wave
 import math
 import struct
+import asyncio
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -477,7 +478,7 @@ async def get_story_play_url(story_id: int):
 
 @router.post("/generate_audio")
 async def speak(request: SpeakRequest):
-    """Get story text from Stories by story_id; return existing playUrl if already played, else TTS, store, return URL."""
+    """Start story audio generation and return quickly (poll /voice/speak/{story_id})."""
     started_at = time.perf_counter()
     _agent_log(
         hypothesis_id="A",
@@ -492,58 +493,93 @@ async def speak(request: SpeakRequest):
             "hasVoiceSettings": request.voice_settings is not None,
         },
     )
+
+    # Fast path: if playUrl already exists, return it immediately.
     try:
-        result = await generate_and_store_story_audio(
-            story_id=request.story_id,
-            voice_id=request.voice_id,
-            model_id=request.model_id,
-            output_format=request.output_format,
-            seed=request.seed,
-            voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
+        supabase = get_supabase()
+        existing = (
+            supabase.table("Stories")
+            .select("playUrl")
+            .eq("id", request.story_id)
+            .or_("is_deleted.eq.false,is_deleted.is.null")
+            .execute()
         )
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        _agent_log(
-            hypothesis_id="E",
-            location="app/api/voice.py:generate_audio:httpx_error",
-            message="generate_audio httpx error (voice provider or dependency)",
-            data={
-                "storyId": request.story_id,
-                "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
-                "errorType": type(e).__name__,
-            },
-        )
-        _raise_http_from_httpx(e)
+        rows = list(existing.data or [])
+        play_url = (rows[0].get("playUrl") or "").strip() if rows else ""
+        if play_url:
+            _agent_log(
+                hypothesis_id="A",
+                location="app/api/voice.py:generate_audio:cached",
+                message="generate_audio returned existing playUrl",
+                data={
+                    "storyId": request.story_id,
+                    "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+                },
+            )
+            return {"url": play_url, "content_type": "audio/mpeg"}
     except Exception as e:
         _agent_log(
             hypothesis_id="A",
-            location="app/api/voice.py:generate_audio:exception",
-            message="generate_audio exception",
+            location="app/api/voice.py:generate_audio:cached_check_failed",
+            message="generate_audio cached playUrl check failed; continuing",
             data={
                 "storyId": request.story_id,
                 "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
                 "errorType": type(e).__name__,
             },
         )
-        raise
-    if result is None:
-        supabase = get_supabase()
-        r = supabase.table("Stories").select("id", "story").eq("id", request.story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        rows = r.data or []
-        raise HTTPException(
-            status_code=404 if not rows else 400,
-            detail="Story not found or has no story text",
+
+    # Fire-and-forget background generation (includes Auphonic). Client should poll speak/{story_id}.
+    async def _run_generation() -> None:
+        job_started = time.perf_counter()
+        _agent_log(
+            hypothesis_id="A",
+            location="app/api/voice.py:generate_audio:bg_start",
+            message="generate_audio background job start",
+            data={"storyId": request.story_id},
         )
+        try:
+            await generate_and_store_story_audio(
+                story_id=request.story_id,
+                voice_id=request.voice_id,
+                model_id=request.model_id,
+                output_format=request.output_format,
+                seed=request.seed,
+                voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
+                apply_postprocess=True,
+            )
+            _agent_log(
+                hypothesis_id="A",
+                location="app/api/voice.py:generate_audio:bg_success",
+                message="generate_audio background job success",
+                data={
+                    "storyId": request.story_id,
+                    "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
+                },
+            )
+        except Exception as e:
+            _agent_log(
+                hypothesis_id="A",
+                location="app/api/voice.py:generate_audio:bg_error",
+                message="generate_audio background job error",
+                data={
+                    "storyId": request.story_id,
+                    "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
+                    "errorType": type(e).__name__,
+                },
+            )
+
+    asyncio.create_task(_run_generation())
     _agent_log(
         hypothesis_id="A",
-        location="app/api/voice.py:generate_audio:success",
-        message="generate_audio request success",
+        location="app/api/voice.py:generate_audio:accepted",
+        message="generate_audio accepted; returning 202",
         data={
             "storyId": request.story_id,
             "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
-            "hasUrl": bool((result.get("url") or "").strip()),
-            "contentType": result.get("content_type"),
-            "metrics": result.get("metrics"),
         },
     )
-    return {"url": result["url"], "content_type": result["content_type"]}
-    # return {"format_text": result["format_text"], "text_with_breaks": result["text_with_breaks"]}
+    raise HTTPException(
+        status_code=status.HTTP_202_ACCEPTED,
+        detail="Audio generation started. Poll /api/voice/speak/{story_id} for playUrl.",
+    )
