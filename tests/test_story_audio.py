@@ -33,8 +33,17 @@ class StoryAudioTests(unittest.TestCase):
     def test_ssml_sentence_breaks_are_not_added_at_chunk_end(self):
         ssml = _add_breaks_to_paragraph("Limitless. Already done.")
 
-        self.assertIn('Limitless. <break time="0.4s" /> Already done.', ssml)
-        self.assertNotIn('Already done. <break', ssml)
+        self.assertEqual(ssml, "<speak>Limitless. Already done.</speak>")
+        self.assertNotIn("<break", ssml)
+
+    def test_ssml_sentence_breaks_are_not_added_after_story_sentence(self):
+        ssml = _add_breaks_to_paragraph(
+            "Fresh berries from the Santa Monica Farmers Market gleamed like jewels. "
+            "I popped a strawberry into my mouth."
+        )
+
+        self.assertIn("gleamed like jewels. I popped", ssml)
+        self.assertNotIn("jewels. <break", ssml)
 
     def test_tts_formatting_uses_larger_chunks_for_story_audio(self):
         text = " ".join(f"Sentence {idx}." for idx in range(1, 17))

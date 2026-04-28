@@ -203,7 +203,6 @@ def _format_text_for_tts(text: str) -> str:
 PAUSE_COMMA = '<break time="0.2s" />'
 PAUSE_ELLIPSIS = '<break time="0.5s" />'
 PAUSE_COLON = '<break time="0.2s" />'
-PAUSE_SENTENCE = '<break time="0.4s" />'
 PAUSE_PARAGRAPH = '<break time="0s" />'
 
 
@@ -221,10 +220,7 @@ def _add_breaks_to_paragraph(paragraph: str, *, add_trailing_paragraph_break: bo
             continue
         parts.append(ch)
         nxt = paragraph[idx + 1] if idx + 1 < length else ""
-        if ch in ".!?":
-            if nxt == " ":
-                parts.append(f" {PAUSE_SENTENCE}")
-        elif ch == ":" and nxt == " ":
+        if ch == ":" and nxt == " ":
             parts.append(f" {PAUSE_COLON}")
         elif ch == "," and nxt == " ":
             parts.append(f" {PAUSE_COMMA}")
