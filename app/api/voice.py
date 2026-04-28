@@ -577,6 +577,14 @@ async def speak(request: SpeakRequest):
                 },
             )
         except Exception as e:
+            error_detail = str(e)
+            if isinstance(e, httpx.HTTPStatusError):
+                try:
+                    error_detail = f"HTTP {e.response.status_code}: {e.response.text}"
+                except Exception:
+                    error_detail = str(e)
+            if error_detail and len(error_detail) > 1500:
+                error_detail = error_detail[:1500]
             _agent_log(
                 hypothesis_id="A",
                 location="app/api/voice.py:generate_audio:bg_error",
@@ -585,6 +593,7 @@ async def speak(request: SpeakRequest):
                     "storyId": request.story_id,
                     "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
                     "errorType": type(e).__name__,
+                    "errorDetail": error_detail,
                 },
             )
 

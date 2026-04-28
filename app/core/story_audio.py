@@ -25,6 +25,11 @@ try:
 except ImportError:
     MutagenFile = None
 
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 MAX_SENTENCE_WORDS = 20
 SENTENCES_PER_PARAGRAPH = (6, 8)
 MAX_TTS_CHUNK_CHARS = 1800
@@ -576,6 +581,20 @@ async def generate_and_store_story_audio(
                 }
             )
     except Exception as exc:
+        if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
+            try:
+                status_code = exc.response.status_code if exc.response is not None else None
+                response_text = (exc.response.text or "") if exc.response is not None else ""
+            except Exception:
+                status_code = None
+                response_text = ""
+            response_text = response_text[:1500]
+            logging.warning(
+                "[TTS] ElevenLabs HTTPStatusError story_id=%s status=%s body=%s",
+                story_id,
+                status_code,
+                response_text,
+            )
         _agent_log(
             hypothesis_id="D",
             location="app/core/story_audio.py:generate_and_store_story_audio:tts_exception",
