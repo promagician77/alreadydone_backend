@@ -460,6 +460,7 @@ class SpeakRequest(BaseModel):
     output_format: str | None = Field(default=None, description="Optional ElevenLabs output format override")
     seed: int | None = Field(default=None, ge=0, le=4294967295)
     voice_settings: VoiceSettingsRequest | None = None
+    force_regenerate: bool = Field(default=False, description="Ignore an existing playUrl and create fresh audio")
 
 @router.get("/speak/{story_id}")
 async def get_story_play_url(story_id: int):
@@ -491,43 +492,61 @@ async def speak(request: SpeakRequest):
             "hasOutputFormat": request.output_format is not None,
             "hasSeed": request.seed is not None,
             "hasVoiceSettings": request.voice_settings is not None,
+            "forceRegenerate": request.force_regenerate,
         },
     )
 
     # Fast path: if playUrl already exists, return it immediately.
-    try:
-        supabase = get_supabase()
-        existing = (
-            supabase.table("Stories")
-            .select("playUrl")
-            .eq("id", request.story_id)
-            .or_("is_deleted.eq.false,is_deleted.is.null")
-            .execute()
-        )
-        rows = list(existing.data or [])
-        play_url = (rows[0].get("playUrl") or "").strip() if rows else ""
-        if play_url:
+    if not request.force_regenerate:
+        try:
+            supabase = get_supabase()
+            existing = (
+                supabase.table("Stories")
+                .select("playUrl")
+                .eq("id", request.story_id)
+                .or_("is_deleted.eq.false,is_deleted.is.null")
+                .execute()
+            )
+            rows = list(existing.data or [])
+            play_url = (rows[0].get("playUrl") or "").strip() if rows else ""
+            if play_url:
+                _agent_log(
+                    hypothesis_id="A",
+                    location="app/api/voice.py:generate_audio:cached",
+                    message="generate_audio returned existing playUrl",
+                    data={
+                        "storyId": request.story_id,
+                        "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+                    },
+                )
+                return {"url": play_url, "content_type": "audio/mpeg"}
+        except Exception as e:
             _agent_log(
                 hypothesis_id="A",
-                location="app/api/voice.py:generate_audio:cached",
-                message="generate_audio returned existing playUrl",
+                location="app/api/voice.py:generate_audio:cached_check_failed",
+                message="generate_audio cached playUrl check failed; continuing",
                 data={
                     "storyId": request.story_id,
                     "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
+                    "errorType": type(e).__name__,
                 },
             )
-            return {"url": play_url, "content_type": "audio/mpeg"}
-    except Exception as e:
-        _agent_log(
-            hypothesis_id="A",
-            location="app/api/voice.py:generate_audio:cached_check_failed",
-            message="generate_audio cached playUrl check failed; continuing",
-            data={
-                "storyId": request.story_id,
-                "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
-                "errorType": type(e).__name__,
-            },
-        )
+
+    if request.force_regenerate:
+        try:
+            safe_partial_update(
+                table_name="Stories",
+                id_field="id",
+                record_id=request.story_id,
+                optional_payload={
+                    "playUrl": None,
+                    "storage": None,
+                    "audio_generation_status": "started",
+                    "audio_generation_error": None,
+                },
+            )
+        except Exception:
+            logging.exception("Failed to clear cached audio fields for story %s", request.story_id)
 
     # Fire-and-forget background generation (includes Auphonic). Client should poll speak/{story_id}.
     async def _run_generation() -> None:

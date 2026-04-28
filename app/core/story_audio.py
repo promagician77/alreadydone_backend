@@ -26,7 +26,13 @@ except ImportError:
     MutagenFile = None
 
 MAX_SENTENCE_WORDS = 20
-SENTENCES_PER_PARAGRAPH = (3, 4)
+SENTENCES_PER_PARAGRAPH = (6, 8)
+MAX_TTS_CHUNK_CHARS = 1800
+PCM_SAMPLE_WIDTH_BYTES = 2
+PCM_JOIN_SILENCE_MS = 120
+PCM_EDGE_FADE_MS = 8
+PCM_EDGE_TRIM_MS = 90
+PCM_TRIM_THRESHOLD = 64
 
 # region agent log
 _DEBUG_LOG_PATH = "/home/sebastian/Documents/Already/.cursor/debug-7a5035.log"
@@ -78,7 +84,7 @@ def _format_text_for_tts(text: str) -> str:
     - Normalize em dashes and ellipses (ElevenLabs reads them as natural pauses)
     - Insert commas after common introductory words for breathing room
     - Break overly long sentences at conjunctions
-    - Group sentences into paragraphs every 3-4 sentences
+    - Group sentences into larger chunks to reduce TTS request boundaries
     """
     if not text or not text.strip():
         return text
@@ -169,20 +175,30 @@ def _format_text_for_tts(text: str) -> str:
         final.append(sent)
 
     paragraphs: list[str] = []
-    idx = 0
-    while idx < len(final):
-        left = len(final) - idx
-        take = min(SENTENCES_PER_PARAGRAPH[1], left) if left >= SENTENCES_PER_PARAGRAPH[0] else left
-        take = max(1, take)
-        paragraphs.append(" ".join(final[idx : idx + take]))
-        idx += take
+    current: list[str] = []
+    current_chars = 0
+    min_sentences, max_sentences = SENTENCES_PER_PARAGRAPH
+    for sent in final:
+        added_chars = len(sent) + (1 if current else 0)
+        would_exceed_sentences = len(current) >= max_sentences
+        would_exceed_chars = current_chars + added_chars > MAX_TTS_CHUNK_CHARS
+        if current and (would_exceed_sentences or (len(current) >= min_sentences and would_exceed_chars)):
+            paragraphs.append(" ".join(current))
+            current = []
+            current_chars = 0
+
+        current.append(sent)
+        current_chars += len(sent) + (1 if current_chars else 0)
+
+    if current:
+        paragraphs.append(" ".join(current))
     return "\n\n".join(paragraphs)
 
 
 PAUSE_COMMA = '<break time="0.2s" />'
 PAUSE_ELLIPSIS = '<break time="0.5s" />'
 PAUSE_COLON = '<break time="0.2s" />'
-PAUSE_SENTENCE = '<break time="0.7s" />'
+PAUSE_SENTENCE = '<break time="0.4s" />'
 PAUSE_PARAGRAPH = '<break time="0s" />'
 
 
@@ -201,7 +217,7 @@ def _add_breaks_to_paragraph(paragraph: str, *, add_trailing_paragraph_break: bo
         parts.append(ch)
         nxt = paragraph[idx + 1] if idx + 1 < length else ""
         if ch in ".!?":
-            if nxt in (" ", ""):
+            if nxt == " ":
                 parts.append(f" {PAUSE_SENTENCE}")
         elif ch == ":" and nxt == " ":
             parts.append(f" {PAUSE_COLON}")
@@ -222,8 +238,85 @@ def _parse_output_format(output_format: str) -> tuple[str, int]:
     return codec, sample_rate
 
 
+def _pcm_sample_at(pcm: bytes | bytearray, index: int) -> int:
+    start = index * PCM_SAMPLE_WIDTH_BYTES
+    return int.from_bytes(pcm[start : start + PCM_SAMPLE_WIDTH_BYTES], byteorder="little", signed=True)
+
+
+def _set_pcm_sample(pcm: bytearray, index: int, value: int) -> None:
+    start = index * PCM_SAMPLE_WIDTH_BYTES
+    value = max(-32768, min(32767, int(value)))
+    pcm[start : start + PCM_SAMPLE_WIDTH_BYTES] = value.to_bytes(
+        PCM_SAMPLE_WIDTH_BYTES,
+        byteorder="little",
+        signed=True,
+    )
+
+
+def _trim_pcm_chunk_edges(audio: bytes, sample_rate: int) -> bytes:
+    """Remove low-level edge residue from TTS chunks without trimming speech body."""
+    usable_length = len(audio) - (len(audio) % PCM_SAMPLE_WIDTH_BYTES)
+    audio = audio[:usable_length]
+    frame_count = usable_length // PCM_SAMPLE_WIDTH_BYTES
+    edge_frames = int(sample_rate * PCM_EDGE_TRIM_MS / 1000)
+    if frame_count == 0 or frame_count <= edge_frames * 2:
+        return audio
+
+    start_frame = 0
+    start_scan_end = min(edge_frames, frame_count)
+    while start_frame < start_scan_end and abs(_pcm_sample_at(audio, start_frame)) <= PCM_TRIM_THRESHOLD:
+        start_frame += 1
+    if start_frame >= start_scan_end:
+        start_frame = 0
+
+    end_frame = frame_count
+    end_scan_start = max(0, frame_count - edge_frames)
+    cursor = frame_count - 1
+    while cursor >= end_scan_start and abs(_pcm_sample_at(audio, cursor)) <= PCM_TRIM_THRESHOLD:
+        cursor -= 1
+    if cursor >= end_scan_start:
+        end_frame = cursor + 1
+
+    if start_frame >= end_frame:
+        return audio
+    return audio[start_frame * PCM_SAMPLE_WIDTH_BYTES : end_frame * PCM_SAMPLE_WIDTH_BYTES]
+
+
+def _fade_pcm_chunk_edges(audio: bytes, sample_rate: int) -> bytes:
+    frame_count = len(audio) // PCM_SAMPLE_WIDTH_BYTES
+    fade_frames = int(sample_rate * PCM_EDGE_FADE_MS / 1000)
+    if frame_count == 0 or fade_frames <= 0 or frame_count <= fade_frames * 4:
+        return audio
+
+    faded = bytearray(audio)
+    for index in range(fade_frames):
+        fade_in_scale = (index + 1) / fade_frames
+        fade_out_scale = (fade_frames - index) / fade_frames
+        _set_pcm_sample(faded, index, round(_pcm_sample_at(faded, index) * fade_in_scale))
+        end_index = frame_count - fade_frames + index
+        _set_pcm_sample(faded, end_index, round(_pcm_sample_at(faded, end_index) * fade_out_scale))
+    return bytes(faded)
+
+
+def _join_pcm_chunks(audio_chunks: list[bytes], sample_rate: int) -> bytes:
+    cleaned_chunks: list[bytes] = []
+    for chunk in audio_chunks:
+        cleaned = _trim_pcm_chunk_edges(chunk, sample_rate)
+        if cleaned:
+            cleaned_chunks.append(_fade_pcm_chunk_edges(cleaned, sample_rate))
+
+    if not cleaned_chunks:
+        return b""
+    if len(cleaned_chunks) == 1:
+        return cleaned_chunks[0]
+
+    silence_frames = int(sample_rate * PCM_JOIN_SILENCE_MS / 1000)
+    join_silence = b"\x00" * (silence_frames * PCM_SAMPLE_WIDTH_BYTES)
+    return join_silence.join(cleaned_chunks)
+
+
 def _pcm_chunks_to_wav(audio_chunks: list[bytes], sample_rate: int) -> bytes:
-    raw_audio = b"".join(audio_chunks)
+    raw_audio = _join_pcm_chunks(audio_chunks, sample_rate)
     with io.BytesIO() as buffer:
         with wave.open(buffer, "wb") as wav_file:
             wav_file.setnchannels(1)
@@ -512,6 +605,9 @@ async def generate_and_store_story_audio(
     if codec == "pcm":
         audio_bytes = _pcm_chunks_to_wav(audio_chunks, sample_rate)
         final_content_type = "audio/wav"
+        joined_duration = _estimate_duration(final_content_type, "wav", audio_bytes)
+        if joined_duration is not None:
+            total_duration = joined_duration
         file_ext = "wav"
     elif codec == "wav":
         audio_bytes, wav_duration = _wav_chunks_to_wav(audio_chunks)

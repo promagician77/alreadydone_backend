@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 from app.core.auphonic import AuphonicError, AuphonicResult
 from app.core.elevenlabs import TTSResult
 from app.core import story_audio
-from app.core.story_audio import _parse_output_format, _pcm_chunks_to_wav
+from app.core.story_audio import _add_breaks_to_paragraph, _format_text_for_tts, _parse_output_format, _pcm_chunks_to_wav
 
 
 class StoryAudioTests(unittest.TestCase):
@@ -28,7 +28,21 @@ class StoryAudioTests(unittest.TestCase):
             self.assertEqual(wav_file.getnchannels(), 1)
             self.assertEqual(wav_file.getsampwidth(), 2)
             self.assertEqual(wav_file.getframerate(), 24000)
-            self.assertEqual(wav_file.getnframes(), 20)
+            self.assertEqual(wav_file.getnframes(), 2900)
+
+    def test_ssml_sentence_breaks_are_not_added_at_chunk_end(self):
+        ssml = _add_breaks_to_paragraph("Limitless. Already done.")
+
+        self.assertIn('Limitless. <break time="0.4s" /> Already done.', ssml)
+        self.assertNotIn('Already done. <break', ssml)
+
+    def test_tts_formatting_uses_larger_chunks_for_story_audio(self):
+        text = " ".join(f"Sentence {idx}." for idx in range(1, 17))
+
+        chunks = [p for p in _format_text_for_tts(text).split("\n\n") if p.strip()]
+
+        self.assertEqual(len(chunks), 2)
+        self.assertTrue(all(chunk.count(".") == 8 for chunk in chunks))
 
     def test_generate_story_audio_skips_auphonic_when_disabled(self):
         tts_result = TTSResult(
