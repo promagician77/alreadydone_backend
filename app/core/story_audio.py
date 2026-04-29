@@ -135,7 +135,10 @@ def _format_text_for_tts(text: str) -> str:
 
     sentences = [sent.replace(ellipsis_placeholder, "...") for sent in sentences]
 
-    conj = re.compile(r"\s+(and|but|so|or|then|yet|nor)\s+", re.I)
+    conj = re.compile(
+        r"\s+(and|but|so|or|then|yet|nor|where|which|while|when|although|though|because)\s+",
+        re.I,
+    )
     result: list[str] = []
     for sent in sentences:
         if len(sent.split()) <= MAX_SENTENCE_WORDS:
