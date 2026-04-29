@@ -214,7 +214,7 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
     if count_today is None:
         count_today = len(r_today.data or []) if r_today.data is not None else 0
     
-    if (count_today or 0) >= 1 and user_id != 257 and user_id != 237:
+    if (count_today or 0) >= 1 and user_id != 242 and user_id != 237:
         raise HTTPException(
             status_code=403,
             detail=(
