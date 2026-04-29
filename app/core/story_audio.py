@@ -163,7 +163,7 @@ def _format_text_for_tts(text: str) -> str:
                 result.append(chunk)
 
     intro = re.compile(
-        r"^(Well|So|However|First|Then|Now|Yes|No|Actually|Finally|Suddenly)\s+(?!,)",
+        r"^(Well|So|However|First|Then|Now|Yes|Actually|Finally|Suddenly)\s+(?!,)",
         re.I,
     )
     for idx, sent in enumerate(result):
