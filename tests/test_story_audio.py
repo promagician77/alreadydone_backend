@@ -54,13 +54,17 @@ class StoryAudioTests(unittest.TestCase):
         self.assertTrue(all(chunk.count(".") == 8 for chunk in chunks))
 
     def test_tts_formatting_splits_long_sentence_at_where_not_after_in(self):
-        """Avoid blind 20-word split that ended with 'was in.' and paused before 'full'."""
+        """Avoid false sentence breaks around 'where ... was in full swing'."""
         text = (
             "I stepped out onto the private balcony of the Pelican Hill Resort, "
             "where the Already Done team celebration was in full swing."
         )
         formatted = _format_text_for_tts(text)
-        self.assertNotIn("was in. full", formatted.replace("\n", " "))
+        normalized = formatted.replace("\n", " ")
+
+        self.assertIn("Resort, where", normalized)
+        self.assertNotIn("where.", normalized)
+        self.assertNotIn("was in. full", normalized)
 
     def test_generate_story_audio_skips_auphonic_when_disabled(self):
         tts_result = TTSResult(

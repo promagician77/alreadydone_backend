@@ -135,10 +135,7 @@ def _format_text_for_tts(text: str) -> str:
 
     sentences = [sent.replace(ellipsis_placeholder, "...") for sent in sentences]
 
-    conj = re.compile(
-        r"\s+(and|but|so|or|then|yet|nor|where|which|while|when|although|though|because)\s+",
-        re.I,
-    )
+    conj = re.compile(r"\s+(and|but|so|or|then|yet|nor)\s+", re.I)
     result: list[str] = []
     for sent in sentences:
         if len(sent.split()) <= MAX_SENTENCE_WORDS:
@@ -148,6 +145,16 @@ def _format_text_for_tts(text: str) -> str:
         while remaining.strip():
             remaining = remaining.strip()
             found = False
+            for match in re.finditer(r",\s+", remaining):
+                prefix = remaining[: match.end()].strip()
+                wc = len(prefix.split())
+                if 5 <= wc <= MAX_SENTENCE_WORDS:
+                    result.append(prefix)
+                    remaining = remaining[match.end() :].strip()
+                    found = True
+                    break
+            if found:
+                continue
             for match in conj.finditer(remaining):
                 prefix = remaining[: match.start()].strip()
                 wc = len(prefix.split())
@@ -178,7 +185,7 @@ def _format_text_for_tts(text: str) -> str:
     final: list[str] = []
     for sent in result:
         sent = sent.strip()
-        if sent and sent[-1] not in ".!?":
+        if sent and sent[-1] not in ".!?,;:":
             sent += "."
         final.append(sent)
 
