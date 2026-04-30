@@ -53,18 +53,27 @@ class StoryAudioTests(unittest.TestCase):
         self.assertEqual(len(chunks), 2)
         self.assertTrue(all(chunk.count(".") == 8 for chunk in chunks))
 
-    def test_tts_formatting_splits_long_sentence_at_where_not_after_in(self):
-        """Avoid false sentence breaks around 'where ... was in full swing'."""
+    def test_tts_formatting_does_not_split_after_preposition(self):
         text = (
             "I stepped out onto the private balcony of the Pelican Hill Resort, "
             "where the Already Done team celebration was in full swing."
         )
-        formatted = _format_text_for_tts(text)
-        normalized = formatted.replace("\n", " ")
 
-        self.assertIn("Resort, where", normalized)
-        self.assertNotIn("where.", normalized)
-        self.assertNotIn("was in. full", normalized)
+        formatted = _format_text_for_tts(text)
+
+        self.assertIn("celebration was in full swing.", formatted)
+        self.assertNotIn("celebration was in.", formatted)
+
+    def test_tts_formatting_does_not_leave_conjunction_dangling(self):
+        text = (
+            "I walked through the bright front door of my new home with sunlight across the floor "
+            "and felt every room welcome me with warmth and peace as my dream settled around me."
+        )
+
+        formatted = _format_text_for_tts(text)
+
+        self.assertNotIn("floor and.", formatted)
+        self.assertIn("floor. and felt", formatted)
 
     def test_generate_story_audio_skips_auphonic_when_disabled(self):
         tts_result = TTSResult(

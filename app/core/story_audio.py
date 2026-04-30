@@ -38,6 +38,52 @@ PCM_JOIN_SILENCE_MS = 120
 PCM_EDGE_FADE_MS = 8
 PCM_EDGE_TRIM_MS = 90
 PCM_TRIM_THRESHOLD = 64
+MIN_SAFE_SPLIT_WORDS = 8
+SPLIT_LOOKAHEAD_WORDS = 6
+UNSAFE_SPLIT_END_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "between",
+    "but",
+    "by",
+    "during",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "nor",
+    "of",
+    "on",
+    "onto",
+    "or",
+    "over",
+    "so",
+    "that",
+    "the",
+    "then",
+    "through",
+    "to",
+    "under",
+    "was",
+    "were",
+    "when",
+    "where",
+    "while",
+    "who",
+    "which",
+    "with",
+    "within",
+    "without",
+    "yet",
+}
 
 # region agent log
 _DEBUG_LOG_PATH = "/home/sebastian/Documents/Already/.cursor/debug-7a5035.log"
@@ -81,6 +127,32 @@ def _agent_log(*, hypothesis_id: str, location: str, message: str, data: dict) -
         pass
 
 # endregion agent log
+
+
+def _is_unsafe_split_end(word: str) -> bool:
+    cleaned = word.strip().strip("\"'()[]{}.,;:!?").lower()
+    return cleaned in UNSAFE_SPLIT_END_WORDS
+
+
+def _safe_sentence_split_index(words: list[str]) -> int:
+    """Choose a word boundary that does not create an unnatural TTS pause."""
+    if len(words) <= MAX_SENTENCE_WORDS:
+        return len(words)
+    if len(words) <= MAX_SENTENCE_WORDS + SPLIT_LOOKAHEAD_WORDS:
+        return len(words)
+
+    target = min(MAX_SENTENCE_WORDS, len(words))
+    min_backward = max(MIN_SAFE_SPLIT_WORDS, target - SPLIT_LOOKAHEAD_WORDS)
+    for split_at in range(target, min_backward - 1, -1):
+        if not _is_unsafe_split_end(words[split_at - 1]):
+            return split_at
+
+    max_forward = min(len(words), target + SPLIT_LOOKAHEAD_WORDS)
+    for split_at in range(target + 1, max_forward + 1):
+        if not _is_unsafe_split_end(words[split_at - 1]):
+            return split_at
+
+    return len(words) if len(words) <= max_forward else target
 
 
 def _format_text_for_tts(text: str) -> str:
@@ -138,29 +210,22 @@ def _format_text_for_tts(text: str) -> str:
     conj = re.compile(r"\s+(and|but|so|or|then|yet|nor)\s+", re.I)
     result: list[str] = []
     for sent in sentences:
-        if len(sent.split()) <= MAX_SENTENCE_WORDS:
+        if len(sent.split()) <= MAX_SENTENCE_WORDS + SPLIT_LOOKAHEAD_WORDS:
             result.append(sent)
             continue
         remaining = sent
         while remaining.strip():
             remaining = remaining.strip()
+            if len(remaining.split()) <= MAX_SENTENCE_WORDS + SPLIT_LOOKAHEAD_WORDS:
+                result.append(remaining)
+                break
             found = False
-            for match in re.finditer(r",\s+", remaining):
-                prefix = remaining[: match.end()].strip()
-                wc = len(prefix.split())
-                if 5 <= wc <= MAX_SENTENCE_WORDS:
-                    result.append(prefix)
-                    remaining = remaining[match.end() :].strip()
-                    found = True
-                    break
-            if found:
-                continue
             for match in conj.finditer(remaining):
                 prefix = remaining[: match.start()].strip()
                 wc = len(prefix.split())
                 if 5 <= wc <= MAX_SENTENCE_WORDS:
-                    result.append(prefix + " " + match.group(0).strip())
-                    remaining = remaining[match.end() :].strip()
+                    result.append(prefix)
+                    remaining = remaining[match.start() :].strip()
                     found = True
                     break
             if not found:
@@ -168,8 +233,12 @@ def _format_text_for_tts(text: str) -> str:
                 if len(words) <= MAX_SENTENCE_WORDS:
                     result.append(remaining)
                     break
-                chunk = " ".join(words[:MAX_SENTENCE_WORDS])
-                remaining = " ".join(words[MAX_SENTENCE_WORDS:]).strip()
+                split_at = _safe_sentence_split_index(words)
+                if split_at >= len(words):
+                    result.append(remaining)
+                    break
+                chunk = " ".join(words[:split_at])
+                remaining = " ".join(words[split_at:]).strip()
                 result.append(chunk)
 
     intro = re.compile(
@@ -185,7 +254,7 @@ def _format_text_for_tts(text: str) -> str:
     final: list[str] = []
     for sent in result:
         sent = sent.strip()
-        if sent and sent[-1] not in ".!?,;:":
+        if sent and sent[-1] not in ".!?":
             sent += "."
         final.append(sent)
 
