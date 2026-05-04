@@ -75,6 +75,28 @@ class StoryAudioTests(unittest.TestCase):
         self.assertNotIn("floor and.", formatted)
         self.assertIn("floor. and felt", formatted)
 
+    def test_tts_formatting_no_intro_comma_after_sentence_initial_so(self):
+        """Regress: intro comma + SSML pause after 'So' hurt lines like 'So bright...'."""
+        text = "My eyes were bright. So bright they looked like tiny suns."
+        formatted = _format_text_for_tts(text)
+        self.assertNotIn("So, bright", formatted)
+        self.assertIn("So bright", formatted)
+
+    def test_tts_formatting_does_not_split_at_intensifier_so(self):
+        """Regress: splitting on bare '\\s+so\\s+' broke 'was so big' and added chunk pauses."""
+        text = (
+            "I opened my eyes in Newport and the joy was so big inside me "
+            "that my whole body felt light."
+        )
+        formatted = _format_text_for_tts(text)
+        flat = formatted.replace("\n\n", " ").replace("\n", " ")
+        self.assertIn("joy was so big", flat)
+
+    def test_tts_formatting_preserves_comma_so_meaning_therefore(self):
+        text = "I was tired, so I left early."
+        formatted = _format_text_for_tts(text)
+        self.assertIn("tired, so I", formatted.replace("\n\n", " "))
+
     def test_generate_story_audio_skips_auphonic_when_disabled(self):
         tts_result = TTSResult(
             audio_bytes=b"\x00\x00" * 20,

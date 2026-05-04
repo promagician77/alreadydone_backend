@@ -207,7 +207,13 @@ def _format_text_for_tts(text: str) -> str:
 
     sentences = [sent.replace(ellipsis_placeholder, "...") for sent in sentences]
 
-    conj = re.compile(r"\s+(and|but|so|or|then|yet|nor)\s+", re.I)
+    # Split long clauses at coordinators — but NOT bare "\s+so\s+", which matches
+    # intensifiers ("was so big", "so bright") and creates chunk boundaries + pauses.
+    # Keep ", so " / "; so " for true "therefore" clauses.
+    conj = re.compile(
+        r"(?<=[,;])\s*so\s+|\s+(?:and|but|or|then|yet|nor)\s+",
+        re.I,
+    )
     result: list[str] = []
     for sent in sentences:
         if len(sent.split()) <= MAX_SENTENCE_WORDS + SPLIT_LOOKAHEAD_WORDS:
@@ -241,8 +247,10 @@ def _format_text_for_tts(text: str) -> str:
                 remaining = " ".join(words[split_at:]).strip()
                 result.append(chunk)
 
+    # Do not treat sentence-initial "So" as an intro word — adding ", " inserts SSML
+    # comma breaks and causes an audible pause after "So" (e.g. "So bright...", "So I ran.").
     intro = re.compile(
-        r"^(Well|So|However|First|Then|Now|Yes|Actually|Finally|Suddenly)\s+(?!,)",
+        r"^(Well|However|First|Then|Now|Yes|Actually|Finally|Suddenly)\s+(?!,)",
         re.I,
     )
     for idx, sent in enumerate(result):
