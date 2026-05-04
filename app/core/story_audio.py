@@ -497,13 +497,41 @@ def _write_temp_file(content: bytes, suffix: str) -> str:
 
 
 def _upload_temp_file(*, bucket: str, path: str, tmp_path: str, content_type: str) -> str:
+    """Upload a temp file to Storage; retries transient httpx timeouts (slow/large uploads)."""
     supabase = get_supabase()
-    supabase.storage.from_(bucket).upload(
-        path,
-        tmp_path,
-        file_options={"contentType": str(content_type), "upsert": "true"},
-    )
-    return supabase.storage.from_(bucket).get_public_url(path)
+    # Seconds between attempts after the first failure (0 = immediate first try).
+    backoff_s = (0.0, 2.0, 5.0)
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate(backoff_s):
+        if delay:
+            time.sleep(delay)
+        try:
+            supabase.storage.from_(bucket).upload(
+                path,
+                tmp_path,
+                file_options={"contentType": str(content_type), "upsert": "true"},
+            )
+            return supabase.storage.from_(bucket).get_public_url(path)
+        except Exception as exc:
+            last_exc = exc
+            retry = False
+            if httpx is not None and isinstance(
+                exc, (httpx.TimeoutException, httpx.ConnectError)
+            ):
+                retry = attempt < len(backoff_s) - 1
+            if retry:
+                logging.warning(
+                    "Supabase storage upload timeout (attempt %s/%s) bucket=%s path=%s: %s",
+                    attempt + 1,
+                    len(backoff_s),
+                    bucket,
+                    path,
+                    exc,
+                )
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def _store_manifest(*, bucket: str, manifest_path: str, manifest: dict) -> str:

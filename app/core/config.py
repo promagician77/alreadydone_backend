@@ -9,14 +9,14 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = "Record-Stories"
-    # Claude API
+    SUPABASE_STORAGE_CLIENT_TIMEOUT_SECONDS: float = 300.0
+    SUPABASE_POSTGREST_CLIENT_TIMEOUT_SECONDS: float = 180.0
     ANTHROPIC_API_KEY: str = ""
     CLAUDE_STORY_MODEL: str = "claude-sonnet-4-20250514"
-    CLAUDE_STORY_MAX_TOKENS: int = 900  # enough for 2600 chars + theme
+    CLAUDE_STORY_MAX_TOKENS: int = 900
     CLAUDE_STORY_MAX_CONTINUATIONS: int = 2
     CLAUDE_STORY_CONTINUATION_MAX_TOKENS: int = 400
 
-    # ElevenLabs voice generation
     ELEVENLABS_TTS_TIMEOUT_SECONDS: float = 60.0
     ELEVENLABS_TTS_MAX_RETRIES: int = 2
     ELEVENLABS_TTS_OUTPUT_FORMAT: str = "pcm_24000"
@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     ELEVENLABS_TTS_SPEED: float = 1.0
     ELEVENLABS_TTS_USE_SPEAKER_BOOST: bool = False
 
-    # Auphonic post-processing for generated story audio
     AUPHONIC_ENABLED: bool = True
     AUPHONIC_API_KEY: str = ""
     AUPHONIC_BASE_URL: str = "https://auphonic.com"
