@@ -29,7 +29,6 @@ except ImportError:
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
-# region agent log
 _DEBUG_LOG_PATH = "/home/sebastian/Documents/Already/.cursor/debug-7a5035.log"
 _DEBUG_SESSION_ID = "7a5035"
 
@@ -69,8 +68,6 @@ def _agent_log(*, hypothesis_id: str, location: str, message: str, data: dict) -
             f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
         pass
-
-# endregion agent log
 
 
 def _raise_http_from_httpx(e: BaseException) -> None:
@@ -479,7 +476,6 @@ async def get_story_play_url(story_id: int):
 
 @router.post("/generate_audio")
 async def speak(request: SpeakRequest):
-    """Start story audio generation and return quickly (poll /voice/speak/{story_id})."""
     started_at = time.perf_counter()
     _agent_log(
         hypothesis_id="A",
@@ -496,8 +492,10 @@ async def speak(request: SpeakRequest):
         },
     )
 
-    # Fast path: if playUrl already exists, return it immediately.
+    print('request.force_regenerate: ', request.force_regenerate)
+
     if not request.force_regenerate:
+        print('not request.force_regenerate')
         try:
             supabase = get_supabase()
             existing = (
@@ -548,7 +546,6 @@ async def speak(request: SpeakRequest):
         except Exception:
             logging.exception("Failed to clear cached audio fields for story %s", request.story_id)
 
-    # Fire-and-forget background generation (includes Auphonic). Client should poll speak/{story_id}.
     async def _run_generation() -> None:
         job_started = time.perf_counter()
         _agent_log(
@@ -567,6 +564,7 @@ async def speak(request: SpeakRequest):
                 voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
                 apply_postprocess=True,
             )
+            print('generate_and_store_story_audio success')
             _agent_log(
                 hypothesis_id="A",
                 location="app/api/voice.py:generate_audio:bg_success",
