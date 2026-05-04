@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -637,7 +637,12 @@ async def speak(request: SpeakRequest):
             "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
         },
     )
-    raise HTTPException(
+    return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        detail="Audio generation started. Poll /api/voice/speak/{story_id} for playUrl.",
+        content={
+            "status": "started",
+            "story_id": request.story_id,
+            "url": None,
+            "detail": "Audio generation started. Poll /api/voice/speak/{story_id} for playUrl.",
+        },
     )
