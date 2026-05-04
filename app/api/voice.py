@@ -262,7 +262,39 @@ def _normalize_clone_audio(filename: str, content: bytes) -> tuple[str, bytes, s
                     boosted_meta["auto_gain_applied"] = True
                     boosted_meta["pre_gain_rms_ratio"] = rms_ratio
                     boosted_meta["post_gain_rms_ratio"] = boosted_rms_ratio
+                    if boosted_rms_ratio >= settings.VOICE_CLONE_MIN_RMS_RATIO:
+                        return boosted_name, boosted_bytes, boosted_type, boosted_meta
+                    # loudnorm helped but still under threshold — try linear gain (quiet speech / heavy NR in source).
+                    vol_name, vol_bytes, vol_type, vol_meta = _ffmpeg_to_wav(
+                        audio_filter="loudnorm=I=-20:TP=-2:LRA=7,volume=12dB",
+                    )
+                    if vol_meta.get("normalized"):
+                        vol_metrics = _analyze_wav_bytes(vol_bytes)
+                        vol_rms = vol_metrics.get("rms_ratio")
+                        normalization_meta["post_loudnorm_volume_rms_ratio"] = vol_rms
+                        if vol_rms is not None and vol_rms >= settings.VOICE_CLONE_MIN_RMS_RATIO:
+                            vol_meta["auto_gain_applied"] = True
+                            vol_meta["pre_gain_rms_ratio"] = rms_ratio
+                            vol_meta["post_gain_rms_ratio"] = vol_rms
+                            return vol_name, vol_bytes, vol_type, vol_meta
+                        if vol_rms is not None and vol_rms > boosted_rms_ratio:
+                            vol_meta["auto_gain_applied"] = True
+                            vol_meta["pre_gain_rms_ratio"] = rms_ratio
+                            vol_meta["post_gain_rms_ratio"] = vol_rms
+                            return vol_name, vol_bytes, vol_type, vol_meta
                     return boosted_name, boosted_bytes, boosted_type, boosted_meta
+
+            # loudnorm failed or did not normalize — fixed boost for borderline uploads
+            vol_name, vol_bytes, vol_type, vol_meta = _ffmpeg_to_wav(audio_filter="volume=18dB")
+            if vol_meta.get("normalized"):
+                vol_metrics = _analyze_wav_bytes(vol_bytes)
+                vol_rms = vol_metrics.get("rms_ratio")
+                normalization_meta["post_volume_boost_rms_ratio"] = vol_rms
+                if vol_rms is not None and vol_rms > rms_ratio:
+                    vol_meta["auto_gain_applied"] = True
+                    vol_meta["pre_gain_rms_ratio"] = rms_ratio
+                    vol_meta["post_gain_rms_ratio"] = vol_rms
+                    return vol_name, vol_bytes, vol_type, vol_meta
 
         return normalized_name, normalized_bytes, normalized_type, normalization_meta
     finally:
