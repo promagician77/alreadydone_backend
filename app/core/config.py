@@ -44,23 +44,18 @@ class Settings(BaseSettings):
     VOICE_CLONE_MIN_RMS_RATIO: float = 0.0025
     VOICE_CLONE_AUTO_GAIN_QUIET_AUDIO: bool = True
 
-    # Stripe (subscription paywall: 7-day trial, monthly and annual plans)
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     STRIPE_PRICE_ID_ANNUAL: str = ""
     STRIPE_PRICE_ID_MONTHLY: str = ""
     STRIPE_TRIAL_DAYS: int = 7
-    # Optional override. If empty, app uses client SYSTEM_PROMPT from story_prompts (first-person past tense, 3rd grade vocab).
     STORY_SYSTEM_PROMPT: str = ""
-    # FCM: path to Firebase service account JSON (for reminder push notifications). Empty = reminders not sent.
     FIREBASE_CREDENTIALS_PATH: str = ""
-    # Auth: JWT for login/signup. Override in .env for production (e.g. openssl rand -hex 32).
     JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
-    # RevenueCat webhook: exact value expected in Authorization header (set in .env).
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
 
-    # Mobile soft-update prompt (see GET /api/mobile-app/update). Build = pubspec +N; 0 = disabled.
+    # Mobile soft-update: set MOBILE_* in .env (loaded automatically). 0 = prompt disabled.
     MOBILE_LATEST_BUILD_NUMBER: int = 0
     MOBILE_LATEST_VERSION: str = ""
     MOBILE_UPDATE_MESSAGE: str = ""
