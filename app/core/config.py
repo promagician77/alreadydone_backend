@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # RevenueCat webhook: exact value expected in Authorization header (set in .env).
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
 
+    # Mobile soft-update prompt (see GET /api/mobile-app/update). Build = pubspec +N; 0 = disabled.
+    MOBILE_LATEST_BUILD_NUMBER: int = 0
+    MOBILE_LATEST_VERSION: str = ""
+    MOBILE_UPDATE_MESSAGE: str = ""
+    MOBILE_IOS_STORE_URL: str = ""
+    MOBILE_ANDROID_PLAY_STORE_URL: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
