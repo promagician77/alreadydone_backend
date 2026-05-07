@@ -19,7 +19,7 @@ class GenerateStoryRequest(BaseModel):
     name: str = Field(..., min_length=1, description="User's first name")
     location: str = Field(..., min_length=1, description="Where their dream life takes place (city or country)")
     energyWord: str = Field(..., description="Energy word: Powerful, Peaceful, Abundant, Grateful, Confident")
-    desireCategory: str = Field(..., description="Category: Love, Money, Career, Health, Home")
+    desireCategory: str = Field(..., description="Category: Love, Money, Career/Business, Health, Home")
     desireDescription: str = Field(..., min_length=1, description="User's description, past tense")
     lovedOne: str | None = Field(None, description="Someone they love (optional)")
     timezone: str | None = Field(None, description="User's local IANA timezone, e.g. America/New_York")
