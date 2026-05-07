@@ -34,8 +34,6 @@ class GenerateStoryRequest(BaseModel):
 
 
 class DeepenStoryRequest(BaseModel):
-    """Request body for generating a deepening continuation of an existing story."""
-
     user_id: int = Field(..., description="User who owns the original story")
     story_id: int = Field(..., description="Original story id to deepen")
     name: str = Field(..., min_length=1, description="User's first name")
@@ -247,6 +245,7 @@ async def generate_story_content(body: GenerateStoryRequest):
         body.energyWord,
         body.desireCategory,
     )
+    print(f"body: {body}")
     user_id = body.user_id
     name = body.name
     location = body.location
