@@ -77,6 +77,42 @@ def _days_since(date_value) -> int:
         return 0
 
 
+def _get_first_story_datetime_utc(supabase, user_id: int) -> datetime | None:
+    """
+    Return earliest story created_at (UTC) for user, excluding soft-deleted stories.
+    If missing/invalid, return None.
+    """
+    try:
+        r = (
+            supabase.table("Stories")
+            .select("created_at,is_deleted")
+            .eq("user_id", user_id)
+            .or_("is_deleted.eq.false,is_deleted.is.null")
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        rows = list(r.data or [])
+        if not rows:
+            return None
+        raw = rows[0].get("created_at")
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        elif isinstance(raw, (int, float)):
+            dt = datetime.fromtimestamp(raw, tz=timezone.utc)
+        elif isinstance(raw, datetime):
+            dt = raw
+        else:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 @router.get("/{user_id}")
 async def get_user_info(user_id: int):
     supabase = get_supabase()
@@ -109,6 +145,9 @@ async def get_user_info(user_id: int):
     user["story_count"] = story_count
     user["complete"] = story_count
     user["day_streak"] = _get_streak_days(supabase, user_id)
+    user["days_since_signup"] = _days_since(user.get("created_at"))
+    first_story_dt = _get_first_story_datetime_utc(supabase, user_id)
+    user["days_since_first_story"] = _days_since(first_story_dt)
     user["active"] = active
     return user
 
