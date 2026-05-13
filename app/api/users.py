@@ -78,10 +78,6 @@ def _days_since(date_value) -> int:
 
 
 def _get_first_story_datetime_utc(supabase, user_id: int) -> datetime | None:
-    """
-    Return earliest story created_at (UTC) for user, excluding soft-deleted stories.
-    If missing/invalid, return None.
-    """
     try:
         r = (
             supabase.table("Stories")

@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
 
-    # Mobile soft-update: set MOBILE_* in .env (loaded automatically). 0 = prompt disabled.
+    # Mobile soft-update: set MOBILE_* in .env (loaded automatically).
+    # Disabled when both latest build (after parsing) is 0 and no version string is set.
+    # MOBILE_LATEST_VERSION may be "1.0.8" or "1.0.8+2" (+ build overrides MOBILE_LATEST_BUILD_NUMBER).
     MOBILE_LATEST_BUILD_NUMBER: int = 0
     MOBILE_LATEST_VERSION: str = ""
     MOBILE_UPDATE_MESSAGE: str = ""
