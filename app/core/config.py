@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     VOICE_CLONE_MAX_FILE_SECONDS: float = 180.0
     VOICE_CLONE_MIN_TOTAL_SECONDS: float = 15.0
     VOICE_CLONE_TARGET_SAMPLE_RATE: int = 44100
-    # Peak-normalized RMS vs full scale; 0.005 rejected many real m4a clones after ffmpeg decode.
     VOICE_CLONE_MIN_RMS_RATIO: float = 0.0025
     VOICE_CLONE_AUTO_GAIN_QUIET_AUDIO: bool = True
 
@@ -55,9 +54,6 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     REVENUECAT_WEBHOOK_AUTHORIZATION: str = ""
 
-    # Mobile soft-update: set MOBILE_* in .env (loaded automatically).
-    # Disabled when both latest build (after parsing) is 0 and no version string is set.
-    # MOBILE_LATEST_VERSION may be "1.0.8" or "1.0.8+2" (+ build overrides MOBILE_LATEST_BUILD_NUMBER).
     MOBILE_LATEST_BUILD_NUMBER: int = 0
     MOBILE_LATEST_VERSION: str = ""
     MOBILE_UPDATE_MESSAGE: str = ""
@@ -77,12 +73,12 @@ STORY_MAX_CHARS = 2600
 
 
 # Onboarding inputs for story generation (from Already Done flow)
-CATEGORIES = ("Love", "Money", "Career/Business", "Health", "Home", "Personal Growth")
+CATEGORIES = ("Love", "Money/Lifestyle", "Career/Business", "Health", "Home", "Personal Growth")
 ENERGY_WORDS = ("Powerful", "Peaceful", "Abundant", "Grateful", "Confident")
 
 THEME_BY_CATEGORY = {
     "Love": "A Love That Was Already Yours",
-    "Money": "The Abundance That Arrived",
+    "Money/Lifestyle": "The Abundance That Arrived",
     "Career/Business": "The Career/Business That Was Already Yours",
     "Health": "The Vitality That Was Already Yours",
     "Home": "The Home That Was Already Yours",

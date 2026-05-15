@@ -21,7 +21,7 @@ class GenerateStoryRequest(BaseModel):
     energyWord: str = Field(..., description="Energy word: Powerful, Peaceful, Abundant, Grateful, Confident")
     desireCategory: str = Field(
         ...,
-        description="Category: Love, Money, Career/Business, Health, Home, Personal Growth",
+        description="Category: Love, Money/Lifestyle, Career/Business, Health, Home, Personal Growth",
     )
     desireDescription: str = Field(..., min_length=1, description="User's description, past tense")
     lovedOne: str | None = Field(None, description="Someone they love (optional)")
