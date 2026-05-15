@@ -77,7 +77,7 @@ STORY_MAX_CHARS = 2600
 
 
 # Onboarding inputs for story generation (from Already Done flow)
-CATEGORIES = ("Love", "Money", "Career/Business", "Health", "Home")
+CATEGORIES = ("Love", "Money", "Career/Business", "Health", "Home", "Personal Growth")
 ENERGY_WORDS = ("Powerful", "Peaceful", "Abundant", "Grateful", "Confident")
 
 THEME_BY_CATEGORY = {
@@ -86,6 +86,7 @@ THEME_BY_CATEGORY = {
     "Career/Business": "The Career/Business That Was Already Yours",
     "Health": "The Vitality That Was Already Yours",
     "Home": "The Home That Was Already Yours",
+    "Personal Growth": "The Growth That Was Already Yours",
 }
 
 DESCRIBE_ENGINE_INSTRUCTION = """
