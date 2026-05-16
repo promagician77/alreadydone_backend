@@ -21,6 +21,11 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
+DAILY_HOUR = 2
+DAILY_MINUTE = 35
+DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
+DAILY_BODY = "It's time to create your new daily manifestation story!"
+
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
     """Parse stored timestamp or time string to (hour, minute). Returns None if invalid."""
@@ -56,8 +61,13 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
         return utc_now.hour, utc_now.minute
 
 
+def _is_daily_reminder_time(hour: int, minute: int) -> bool:
+    """True when local time is the fixed daily reminder slot (see DAILY_HOUR/DAILY_MINUTE)."""
+    return (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
+
+
 def _check_and_send_reminders():
-    """Run every minute: query users with reminders enabled and matching time in their timezone, send FCM."""
+    """Run every minute: query users with FCM tokens; send matching reminders in their timezone."""
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
         return
     now_utc = datetime.now(timezone.utc)
@@ -67,7 +77,7 @@ def _check_and_send_reminders():
         r = supabase.table("Users").select(
             "id", "fcm_token", "morningTime_Reminder", "bedTime_Reminder",
             "is_MorningTime_Reminder", "is_BedTime_Reminder", "timezone",
-        ).or_("is_MorningTime_Reminder.eq.true,is_BedTime_Reminder.eq.true").execute()
+        ).not_.is_("fcm_token", "null").execute()
     except Exception as e:
         logging.warning("Reminder query failed: %s", e)
         return
@@ -82,18 +92,16 @@ def _check_and_send_reminders():
         bedtime_on = row.get("is_BedTime_Reminder") in (True, "true")
         morning_hm = _parse_hour_minute(row.get("morningTime_Reminder"))
         bedtime_hm = _parse_hour_minute(row.get("bedTime_Reminder"))
-        print(row.get("morningTime_Reminder"))
-        print(row.get("bedTime_Reminder"))
-        print(morning_hm, current_hour, current_minute)
-        print(bedtime_hm, current_hour, current_minute)
+
         if morning_on and morning_hm and morning_hm == (current_hour, current_minute):
-            if send_push(token, MORNING_TITLE, MORNING_BODY):
-                print("Sent morning reminder to user %s", row.get("id"))
+            if send_push(token, MORNING_TITLE, MORNING_BODY, reminder_type="morning"):
                 logging.info("Sent morning reminder to user %s", row.get("id"))
         if bedtime_on and bedtime_hm and bedtime_hm == (current_hour, current_minute):
-            if send_push(token, BEDTIME_TITLE, BEDTIME_BODY):
-                print("Sent bedtime reminder to user %s", row.get("id"))
+            if send_push(token, BEDTIME_TITLE, BEDTIME_BODY, reminder_type="bedtime"):
                 logging.info("Sent bedtime reminder to user %s", row.get("id"))
+        if _is_daily_reminder_time(current_hour, current_minute):
+            if send_push(token, DAILY_TITLE, DAILY_BODY, reminder_type="daily"):
+                logging.info("Sent daily reminder to user %s", row.get("id"))
 
 
 def start_reminder_scheduler():

@@ -7,6 +7,9 @@ from app.core.config import settings
 
 _fcm_initialized = False
 
+DAILY_NOTIFICATION_CATEGORY = "DAILY_STORY"
+DAILY_STORY_ROUTE = "/onboarding/desire"
+
 
 def _ensure_fcm():
     global _fcm_initialized
@@ -28,26 +31,56 @@ def _ensure_fcm():
         return False
 
 
-def send_push(token: str, title: str, body: str) -> bool:
-    print("Sending push notification to token %s", token)
+def send_push(
+    token: str,
+    title: str,
+    body: str,
+    reminder_type: str | None = None,
+) -> bool:
     """Send a push notification to one FCM token. Returns True if sent successfully."""
     if not token or not token.strip():
-        print("FCM send failed for token %s...: %s", token[:20] if token else "", "No token provided")
+        logging.warning("FCM send skipped: no token provided")
         return False
     if not _ensure_fcm():
-        print("FCM send failed for token %s...: %s", token[:20] if token else "", "FCM not initialized")
+        logging.warning("FCM send skipped: not initialized")
         return False
     try:
         from firebase_admin import messaging
 
+        data: dict[str, str] = {}
+        if reminder_type:
+            data["type"] = reminder_type
+        apns_config = None
+        android_config = None
+
+        if reminder_type == "daily":
+            data["route"] = DAILY_STORY_ROUTE
+            apns_config = messaging.APNSConfig(
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        category=DAILY_NOTIFICATION_CATEGORY,
+                        sound="default",
+                    ),
+                ),
+            )
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    click_action="FLUTTER_NOTIFICATION_CLICK",
+                    channel_id="fcm_default_channel",
+                ),
+            )
+
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
+            data=data,
             token=token.strip(),
+            apns=apns_config,
+            android=android_config,
         )
         messaging.send(message)
-        print("FCM send successful for token %s", token)
+        logging.info("FCM send successful (type=%s)", reminder_type or "default")
         return True
     except Exception as e:
-        print("FCM send failed for token %s...: %s", token[:20] if token else "", e)
         logging.warning("FCM send failed for token %s...: %s", token[:20] if token else "", e)
         return False
