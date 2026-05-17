@@ -21,8 +21,8 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-DAILY_HOUR = 3
-DAILY_MINUTE = 10
+DAILY_HOUR = 23
+DAILY_MINUTE = 45
 DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
 DAILY_BODY = "It's time to create your new daily manifestation story!"
 
@@ -59,7 +59,6 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
         return local.hour, local.minute
     except Exception:
         return utc_now.hour, utc_now.minute
-
 
 def _is_daily_reminder_time(hour: int, minute: int) -> bool:
     """True when local time is the fixed daily reminder slot (see DAILY_HOUR/DAILY_MINUTE)."""

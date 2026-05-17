@@ -16,7 +16,16 @@ def _ensure_fcm():
     if _fcm_initialized:
         return True
     path = (settings.FIREBASE_CREDENTIALS_PATH or "").strip()
-    if not path or not Path(path).is_file():
+    if not path:
+        logging.warning("FCM init skipped: FIREBASE_CREDENTIALS_PATH is not set in .env")
+        return False
+    cred_path = Path(path)
+    if not cred_path.is_file():
+        logging.warning(
+            "FCM init skipped: credentials file not found at %s (resolved=%s)",
+            path,
+            cred_path.resolve(),
+        )
         return False
     try:
         import firebase_admin
