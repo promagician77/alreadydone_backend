@@ -102,3 +102,8 @@ def start_reminder_scheduler():
         logging.info("Reminder scheduler started (every minute)")
 
 
+def stop_reminder_scheduler():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        logging.info("Reminder scheduler stopped")
+
