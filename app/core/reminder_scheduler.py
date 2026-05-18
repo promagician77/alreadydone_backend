@@ -60,7 +60,6 @@ def _check_and_send_reminders():
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
         return
     now_utc = datetime.now(timezone.utc)
-    print(f"now_utc: {now_utc}")
 
     supabase = get_supabase()
     try:
@@ -69,7 +68,6 @@ def _check_and_send_reminders():
             "is_MorningTime_Reminder", "is_BedTime_Reminder", "timezone",
         ).not_.is_("fcm_token", "null").execute()
 
-        print(f"r: {r}")
     except Exception as e:
         logging.warning("Reminder query failed: %s", e)
         return
@@ -93,7 +91,7 @@ def _check_and_send_reminders():
                 logging.info("Sent bedtime reminder to user %s", row.get("id"))
         if _is_daily_reminder_time(current_hour, current_minute):
             if send_push(token, DAILY_TITLE, DAILY_BODY, reminder_type="daily"):
-                logging.info("Sent daily reminder to user %s", row.get("id"))
+                print(f"Sent daily reminder to user {row.get('id')}")
 
 
 def start_reminder_scheduler():
