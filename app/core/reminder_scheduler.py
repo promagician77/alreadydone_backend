@@ -23,12 +23,10 @@ DAILY_BODY = "It's time to create your new daily manifestation story!"
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
-    """Parse stored timestamp or time string to (hour, minute). Returns None if invalid."""
     if value is None:
         return None
     try:
         if isinstance(value, str):
-            # "YYYY-MM-DD HH:MM:SS", "YYYY-MM-DDTHH:MM:SS", "HH:MM:SS", or "08:00"
             s = value.strip()
             if " " in s:
                 s = s.split(" ")[-1]
@@ -62,6 +60,7 @@ def _check_and_send_reminders():
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
         return
     now_utc = datetime.now(timezone.utc)
+    print(f"now_utc: {now_utc}")
 
     supabase = get_supabase()
     try:
@@ -69,6 +68,8 @@ def _check_and_send_reminders():
             "id", "fcm_token", "morningTime_Reminder", "bedTime_Reminder",
             "is_MorningTime_Reminder", "is_BedTime_Reminder", "timezone",
         ).not_.is_("fcm_token", "null").execute()
+
+        print(f"r: {r}")
     except Exception as e:
         logging.warning("Reminder query failed: %s", e)
         return
