@@ -5,8 +5,10 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import settings
-from app.core.fcm import send_push
+from app.core.fcm import probe_fcm_at_startup, send_push
 from app.core.supabase_client import get_supabase
+
+logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
@@ -60,6 +62,13 @@ def _is_daily_reminder_time(hour: int, minute: int, user_id: int) -> bool:
 
 def _check_and_send_reminders():
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
+        logger.warning(
+            "[reminders] tick skipped: missing config "
+            "(FIREBASE_CREDENTIALS_PATH=%s, SUPABASE_URL=%s, SUPABASE_KEY=%s)",
+            bool(settings.FIREBASE_CREDENTIALS_PATH),
+            bool(settings.SUPABASE_URL),
+            bool(settings.SUPABASE_KEY),
+        )
         return
     now_utc = datetime.now(timezone.utc)
     supabase = get_supabase()
@@ -70,17 +79,17 @@ def _check_and_send_reminders():
         ).not_.is_("fcm_token", "null").execute()
 
     except Exception as e:
-        logging.warning("Reminder query failed: %s", e)
+        logger.warning("[reminders] query failed: %s", e)
         return
 
     rows = list(r.data or [])
     for row in rows:
+        user_id = row.get("id")
         token = (row.get("fcm_token") or "").strip()
         if not token:
             continue
-        current_hour, current_minute = _get_user_now(now_utc, row.get("timezone"))
-        if row.get('id') == 237:
-            print(f"Current user: {row.get('id')}, current_hour: {current_hour}, current_minute: {current_minute}")
+        timezone_name = row.get("timezone")
+        current_hour, current_minute = _get_user_now(now_utc, timezone_name)
 
         morning_on = row.get("is_MorningTime_Reminder") in (True, "true")
         bedtime_on = row.get("is_BedTime_Reminder") in (True, "true")
@@ -88,25 +97,70 @@ def _check_and_send_reminders():
         bedtime_hm = _parse_hour_minute(row.get("bedTime_Reminder"))
 
         if morning_on and morning_hm and morning_hm == (current_hour, current_minute):
-            if send_push(token, MORNING_TITLE, MORNING_BODY, reminder_type="morning"):
-                print(f"Sent morning reminder to user {row.get('id')}")
+            logger.info(
+                "[reminders] sending morning user_id=%s local_time=%02d:%02d tz=%r",
+                user_id,
+                current_hour,
+                current_minute,
+                timezone_name,
+            )
+            if send_push(
+                token, MORNING_TITLE, MORNING_BODY, reminder_type="morning", user_id=user_id
+            ):
+                logger.info("[reminders] sent morning user_id=%s", user_id)
+            else:
+                logger.warning("[reminders] morning send failed user_id=%s", user_id)
         if bedtime_on and bedtime_hm and bedtime_hm == (current_hour, current_minute):
-            if send_push(token, BEDTIME_TITLE, BEDTIME_BODY, reminder_type="bedtime"):
-                print(f"Sent bedtime reminder to user {row.get('id')}")
-        if _is_daily_reminder_time(current_hour, current_minute, row.get('id')):
-            if send_push(token, DAILY_TITLE, DAILY_BODY, reminder_type="daily"):
-                print(f"Sent daily reminder to user {row.get('id')}")
+            logger.info(
+                "[reminders] sending bedtime user_id=%s local_time=%02d:%02d tz=%r",
+                user_id,
+                current_hour,
+                current_minute,
+                timezone_name,
+            )
+            if send_push(
+                token, BEDTIME_TITLE, BEDTIME_BODY, reminder_type="bedtime", user_id=user_id
+            ):
+                logger.info("[reminders] sent bedtime user_id=%s", user_id)
+            else:
+                logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
+        if _is_daily_reminder_time(current_hour, current_minute):
+            logger.info(
+                "[reminders] sending daily user_id=%s local_time=%02d:%02d tz=%r "
+                "(target=%02d:%02d)",
+                user_id,
+                current_hour,
+                current_minute,
+                timezone_name,
+                DAILY_HOUR,
+                DAILY_MINUTE,
+            )
+            if send_push(
+                token, DAILY_TITLE, DAILY_BODY, reminder_type="daily", user_id=user_id
+            ):
+                logger.info("[reminders] sent daily user_id=%s", user_id)
+            else:
+                logger.warning(
+                    "[reminders] daily send failed user_id=%s — check [fcm] logs above "
+                    "(credentials file must exist at FIREBASE_CREDENTIALS_PATH)",
+                    user_id,
+                )
 
 
 def start_reminder_scheduler():
     if not scheduler.running:
+        probe_fcm_at_startup()
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
-        logging.info("Reminder scheduler started (every minute)")
+        logger.info(
+            "[reminders] scheduler started (every minute, daily at %02d:%02d local)",
+            DAILY_HOUR,
+            DAILY_MINUTE,
+        )
 
 
 def stop_reminder_scheduler():
     if scheduler.running:
         scheduler.shutdown(wait=False)
-        logging.info("Reminder scheduler stopped")
+        logger.info("[reminders] scheduler stopped")
 
