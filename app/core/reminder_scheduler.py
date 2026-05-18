@@ -78,7 +78,8 @@ def _check_and_send_reminders():
         if not token:
             continue
         current_hour, current_minute = _get_user_now(now_utc, row.get("timezone"))
-        print(f"Current user: {row.get('id')}, current_hour: {current_hour}, current_minute: {current_minute}")
+        if row.get('id') == 237:
+            print(f"Current user: {row.get('id')}, current_hour: {current_hour}, current_minute: {current_minute}")
 
         morning_on = row.get("is_MorningTime_Reminder") in (True, "true")
         bedtime_on = row.get("is_BedTime_Reminder") in (True, "true")
