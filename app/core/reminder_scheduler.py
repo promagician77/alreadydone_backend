@@ -61,8 +61,6 @@ def _check_and_send_reminders():
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
         return
     now_utc = datetime.now(timezone.utc)
-    print(f"now_utc: {now_utc}")
-
     supabase = get_supabase()
     try:
         r = supabase.table("Users").select(
@@ -80,7 +78,7 @@ def _check_and_send_reminders():
         if not token:
             continue
         current_hour, current_minute = _get_user_now(now_utc, row.get("timezone"))
-        print(f"current_hour: {current_hour}, current_minute: {current_minute}")
+        print(f"Current user: {row.get('id')}, current_hour: {current_hour}, current_minute: {current_minute}")
 
         morning_on = row.get("is_MorningTime_Reminder") in (True, "true")
         bedtime_on = row.get("is_BedTime_Reminder") in (True, "true")
