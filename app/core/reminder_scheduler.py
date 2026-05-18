@@ -52,8 +52,9 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
     except Exception:
         return utc_now.hour, utc_now.minute
 
-def _is_daily_reminder_time(hour: int, minute: int) -> bool:
-    print(f"hour: {hour}, minute: {minute}")
+def _is_daily_reminder_time(hour: int, minute: int, user_id: int) -> bool:
+    if user_id == 237:
+        print(f"User {user_id} is daily reminder time: {hour}, {minute}")
     return (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
 
 
@@ -92,7 +93,7 @@ def _check_and_send_reminders():
         if bedtime_on and bedtime_hm and bedtime_hm == (current_hour, current_minute):
             if send_push(token, BEDTIME_TITLE, BEDTIME_BODY, reminder_type="bedtime"):
                 print(f"Sent bedtime reminder to user {row.get('id')}")
-        if _is_daily_reminder_time(current_hour, current_minute):
+        if _is_daily_reminder_time(current_hour, current_minute, row.get('id')):
             if send_push(token, DAILY_TITLE, DAILY_BODY, reminder_type="daily"):
                 print(f"Sent daily reminder to user {row.get('id')}")
 
