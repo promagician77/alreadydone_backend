@@ -5,6 +5,8 @@ from pathlib import Path
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 _fcm_initialized = False
 
 DAILY_NOTIFICATION_CATEGORY = "DAILY_STORY"
@@ -17,12 +19,12 @@ def _ensure_fcm():
         return True
     path = (settings.FIREBASE_CREDENTIALS_PATH or "").strip()
     if not path:
-        logging.warning("FCM init skipped: FIREBASE_CREDENTIALS_PATH is not set in .env")
+        logger.warning("[fcm] init skipped: FIREBASE_CREDENTIALS_PATH is not set in .env")
         return False
     cred_path = Path(path)
     if not cred_path.is_file():
-        logging.warning(
-            "FCM init skipped: credentials file not found at %s (resolved=%s)",
+        logger.warning(
+            "[fcm] init skipped: credentials file not found at %s (resolved=%s)",
             path,
             cred_path.resolve(),
         )
@@ -36,7 +38,7 @@ def _ensure_fcm():
         _fcm_initialized = True
         return True
     except Exception as e:
-        logging.warning("FCM init failed: %s", e)
+        logger.warning("[fcm] init failed: %s", e)
         return False
 
 
@@ -48,11 +50,12 @@ def send_push(
 ) -> bool:
     """Send a push notification to one FCM token. Returns True if sent successfully."""
     if not token or not token.strip():
-        logging.warning("FCM send skipped: no token provided")
+        logger.warning("[fcm] send skipped: no token provided (type=%s)", reminder_type)
         return False
     if not _ensure_fcm():
-        logging.warning("FCM send skipped: not initialized")
+        logger.warning("[fcm] send skipped: not initialized (type=%s)", reminder_type)
         return False
+    token_preview = f"{token.strip()[:12]}..."
     try:
         from firebase_admin import messaging
 
@@ -64,6 +67,12 @@ def send_push(
 
         if reminder_type == "daily":
             data["route"] = DAILY_STORY_ROUTE
+            logger.info(
+                "[fcm] daily push token=%s route=%s category=%s",
+                token_preview,
+                DAILY_STORY_ROUTE,
+                DAILY_NOTIFICATION_CATEGORY,
+            )
             apns_config = messaging.APNSConfig(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
@@ -88,8 +97,8 @@ def send_push(
             android=android_config,
         )
         messaging.send(message)
-        logging.info("FCM send successful (type=%s)", reminder_type or "default")
+        logger.info("[fcm] send ok type=%s token=%s title=%r", reminder_type or "default", token_preview, title)
         return True
     except Exception as e:
-        logging.warning("FCM send failed for token %s...: %s", token[:20] if token else "", e)
+        logger.warning("[fcm] send failed type=%s token=%s: %s", reminder_type, token_preview, e)
         return False

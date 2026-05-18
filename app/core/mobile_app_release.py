@@ -15,12 +15,6 @@ class ResolvedMobileLatest:
 
 
 def resolve_mobile_latest(settings: Settings) -> ResolvedMobileLatest | None:
-    """
-    Merge MOBILE_LATEST_VERSION and MOBILE_LATEST_BUILD_NUMBER.
-
-    MOBILE_LATEST_VERSION may be \"1.0.8\", \"1.0.8+2\", or empty.
-    If a +build suffix is present, it overrides MOBILE_LATEST_BUILD_NUMBER for that field.
-    """
     raw = (settings.MOBILE_LATEST_VERSION or "").strip()
     env_build = int(settings.MOBILE_LATEST_BUILD_NUMBER or 0)
 

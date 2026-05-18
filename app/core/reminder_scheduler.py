@@ -1,8 +1,3 @@
-"""
-Reminder notifications: run every minute, find users whose reminder time matches current time
-in their timezone, and send FCM push. Stored times are local (e.g. 08:00 = 8 AM in user's timezone).
-"""
-
 import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -21,8 +16,8 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-DAILY_HOUR = 23
-DAILY_MINUTE = 45
+DAILY_HOUR = 13
+DAILY_MINUTE = 55
 DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
 DAILY_BODY = "It's time to create your new daily manifestation story!"
 
@@ -51,7 +46,6 @@ def _parse_hour_minute(value) -> tuple[int, int] | None:
 
 
 def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, int]:
-    """Return (hour, minute) of current time in the user's timezone. Falls back to UTC if invalid."""
     tz_str = (user_timezone or "").strip() or "UTC"
     try:
         tz = ZoneInfo(tz_str)
@@ -61,12 +55,10 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
         return utc_now.hour, utc_now.minute
 
 def _is_daily_reminder_time(hour: int, minute: int) -> bool:
-    """True when local time is the fixed daily reminder slot (see DAILY_HOUR/DAILY_MINUTE)."""
     return (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
 
 
 def _check_and_send_reminders():
-    """Run every minute: query users with FCM tokens; send matching reminders in their timezone."""
     if not settings.FIREBASE_CREDENTIALS_PATH or not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
         return
     now_utc = datetime.now(timezone.utc)
@@ -104,14 +96,9 @@ def _check_and_send_reminders():
 
 
 def start_reminder_scheduler():
-    """Start the cron job that runs every minute."""
     if not scheduler.running:
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
         logging.info("Reminder scheduler started (every minute)")
 
 
-def stop_reminder_scheduler():
-    """Stop the scheduler (e.g. on shutdown)."""
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
