@@ -124,7 +124,7 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        if _is_daily_reminder_time(current_hour, current_minute):
+        if _is_daily_reminder_time(current_hour, current_minute, user_id):
             logger.info(
                 "[reminders] sending daily user_id=%s local_time=%02d:%02d tz=%r "
                 "(target=%02d:%02d)",
