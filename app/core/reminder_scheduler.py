@@ -18,7 +18,7 @@ BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
 DAILY_HOUR = 15
-DAILY_MINUTE = 11
+DAILY_MINUTE = 22
 DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
 DAILY_BODY = "It's time to create your new daily manifestation story!"
 
