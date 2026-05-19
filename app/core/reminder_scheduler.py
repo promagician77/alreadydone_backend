@@ -54,10 +54,15 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
         return utc_now.hour, utc_now.minute
 
 def _is_daily_reminder_time(hour: int, minute: int, user_id: int) -> bool:
+    matches = (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
     if user_id == 237:
-        print(f"User {user_id} is daily reminder time: {hour}, {minute}")
-        print(f"DAILY_HOUR: {DAILY_HOUR}, DAILY_MINUTE: {DAILY_MINUTE}")
-    return (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
+        print(
+            f"[reminders/daily] time check user_id={user_id} "
+            f"local={hour:02d}:{minute:02d} target={DAILY_HOUR:02d}:{DAILY_MINUTE:02d} "
+            f"matches={matches}",
+            flush=True,
+        )
+    return matches
 
 
 def _check_and_send_reminders():
@@ -124,17 +129,34 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        if _is_daily_reminder_time(current_hour, current_minute, user_id) and user_id == 237:
+        daily_due = _is_daily_reminder_time(current_hour, current_minute, user_id)
+        if daily_due and user_id == 237:
+            print(
+                f"[reminders/daily] sending user_id={user_id} "
+                f"local={current_hour:02d}:{current_minute:02d} tz={timezone_name!r} "
+                f"title={DAILY_TITLE!r} apns_category=DAILY_STORY",
+                flush=True,
+            )
             if send_push(
                 token, DAILY_TITLE, DAILY_BODY, reminder_type="daily", user_id=user_id
             ):
-                logger.info("[reminders] sent daily user_id=%s", user_id)
-            else:
-                logger.warning(
-                    "[reminders] daily send failed user_id=%s — check [fcm] logs above "
-                    "(credentials file must exist at FIREBASE_CREDENTIALS_PATH)",
-                    user_id,
+                print(
+                    f"[reminders/daily] send_push returned ok user_id={user_id} — "
+                    f"check Xcode for [AlreadyDone/DailyNotification] categoryIdentifier logs",
+                    flush=True,
                 )
+            else:
+                print(
+                    f"[reminders/daily] send_push FAILED user_id={user_id} — "
+                    f"see [fcm/daily] prints above",
+                    flush=True,
+                )
+        elif daily_due and user_id != 237:
+            print(
+                f"[reminders/daily] due at {current_hour:02d}:{current_minute:02d} "
+                f"but skipped (test gate) user_id={user_id}",
+                flush=True,
+            )
 
 
 def start_reminder_scheduler():
