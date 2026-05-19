@@ -19,7 +19,7 @@ BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
 DAILY_HOUR = 12
-DAILY_MINUTE = 26
+DAILY_MINUTE = 31
 DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
 DAILY_BODY = "It's time to create your new daily manifestation story!"
 
@@ -57,6 +57,7 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 def _is_daily_reminder_time(hour: int, minute: int, user_id: int) -> bool:
     if user_id == 237:
         print(f"User {user_id} is daily reminder time: {hour}, {minute}")
+        print(f"DAILY_HOUR: {DAILY_HOUR}, DAILY_MINUTE: {DAILY_MINUTE}")
     return (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
 
 
