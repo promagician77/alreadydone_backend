@@ -12,14 +12,13 @@ logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
-# Notification copy
 MORNING_TITLE = "Good Morning 🌞"
 MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-DAILY_HOUR = 8
-DAILY_MINUTE = 0
+DAILY_HOUR = 14
+DAILY_MINUTE = 33
 DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
 DAILY_BODY = "It's time to create your new daily manifestation story!"
 
@@ -125,17 +124,7 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        if _is_daily_reminder_time(current_hour, current_minute, user_id):
-            logger.info(
-                "[reminders] sending daily user_id=%s local_time=%02d:%02d tz=%r "
-                "(target=%02d:%02d)",
-                user_id,
-                current_hour,
-                current_minute,
-                timezone_name,
-                DAILY_HOUR,
-                DAILY_MINUTE,
-            )
+        if _is_daily_reminder_time(current_hour, current_minute, user_id) and user_id == 237:
             if send_push(
                 token, DAILY_TITLE, DAILY_BODY, reminder_type="daily", user_id=user_id
             ):

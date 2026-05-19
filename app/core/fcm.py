@@ -180,6 +180,7 @@ def send_push(
             apns=apns_config,
             android=android_config,
         )
+        
         messaging.send(message)
         logger.info(
             "[fcm] send ok type=%s %s token=%s title=%r",
