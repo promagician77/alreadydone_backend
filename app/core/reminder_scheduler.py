@@ -17,17 +17,22 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-MONDAY_HOUR = 17
+MONDAY_HOUR = 15
 MONDAY_MINUTE = 50
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
-FRIDAY_HOUR = 17
+FRIDAY_HOUR = 15
 FRIDAY_MINUTE = 50
 FRIDAY_TITLE = "Your Stories Are Waiting"
 FRIDAY_BODY = "Tap to hear them in your voice."
 
 _STORY_REMINDER_TEST_USER_ID = 237
+_TEST_OVERRIDE_WEEKDAY = 2  # Wednesday (Mon=0)
+_TEST_MONDAY_HOUR = 15
+_TEST_MONDAY_MINUTE = 55
+_TEST_FRIDAY_HOUR = 16
+_TEST_FRIDAY_MINUTE = 0
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
@@ -63,11 +68,18 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 
 def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
     matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
+    if user_id == _STORY_REMINDER_TEST_USER_ID:
+        matches = matches or (
+            weekday == _TEST_OVERRIDE_WEEKDAY
+            and (hour, minute) == (_TEST_MONDAY_HOUR, _TEST_MONDAY_MINUTE)
+        )
     if user_id == 237:
         print(
             f"[reminders/monday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
-            f"target=Mon {MONDAY_HOUR:02d}:{MONDAY_MINUTE:02d} matches={matches}",
+            f"target=Mon {MONDAY_HOUR:02d}:{MONDAY_MINUTE:02d} "
+            f"or Wed {_TEST_MONDAY_HOUR:02d}:{_TEST_MONDAY_MINUTE:02d} "
+            f"(test user only) matches={matches}",
             flush=True,
         )
     return matches
@@ -76,10 +88,17 @@ def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int)
 def _is_friday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
     matches = weekday == 4 and (hour, minute) == (FRIDAY_HOUR, FRIDAY_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
+        matches = matches or (
+            weekday == _TEST_OVERRIDE_WEEKDAY
+            and (hour, minute) == (_TEST_FRIDAY_HOUR, _TEST_FRIDAY_MINUTE)
+        )
+    if user_id == _STORY_REMINDER_TEST_USER_ID:
         print(
             f"[reminders/friday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
-            f"target=Fri {FRIDAY_HOUR:02d}:{FRIDAY_MINUTE:02d} matches={matches}",
+            f"target=Fri {FRIDAY_HOUR:02d}:{FRIDAY_MINUTE:02d} "
+            f"or Wed {_TEST_FRIDAY_HOUR:02d}:{_TEST_FRIDAY_MINUTE:02d} "
+            f"(test user only) matches={matches}",
             flush=True,
         )
     return matches
