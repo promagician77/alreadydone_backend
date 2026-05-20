@@ -12,7 +12,13 @@ _fcm_initialized = False
 _fcm_init_failure_logged = False
 
 MONDAY_NOTIFICATION_CATEGORY = "MONDAY_STORY"
-MONDAY_STORY_ROUTE = "/onboarding/desire"
+FRIDAY_NOTIFICATION_CATEGORY = "FRIDAY_STORY"
+STORY_REMINDER_ROUTE = "/onboarding/desire"
+
+_STORY_REMINDER_APNS_CATEGORIES = {
+    "monday": MONDAY_NOTIFICATION_CATEGORY,
+    "friday": FRIDAY_NOTIFICATION_CATEGORY,
+}
 
 
 def _credentials_diagnostics(cred_path: Path) -> str:
@@ -116,13 +122,10 @@ def send_push(
     reminder_type: str | None = None,
     user_id: int | None = None,
 ) -> bool:
-    """Send a push notification to one FCM token. Returns True if sent successfully."""
     user_label = f"user_id={user_id}" if user_id is not None else "user_id=?"
-    if reminder_type == "monday":
-        print(f"[fcm/monday] send_push called {user_label}", flush=True)
     if not token or not token.strip():
-        if reminder_type == "monday":
-            print(f"[fcm/monday] send skipped: no token ({user_label})", flush=True)
+        if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
+            print(f"[fcm/{reminder_type}] send skipped: no token ({user_label})", flush=True)
         logger.warning(
             "[fcm] send skipped: no token provided (type=%s, %s)",
             reminder_type,
@@ -130,8 +133,11 @@ def send_push(
         )
         return False
     if not _ensure_fcm():
-        if reminder_type == "monday":
-            print(f"[fcm/monday] send skipped: FCM not initialized ({user_label})", flush=True)
+        if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
+            print(
+                f"[fcm/{reminder_type}] send skipped: FCM not initialized ({user_label})",
+                flush=True,
+            )
         if _fcm_init_failure_logged:
             logger.debug(
                 "[fcm] send skipped: not initialized (type=%s, %s)",
@@ -155,14 +161,14 @@ def send_push(
         apns_config = None
         android_config = None
 
-        if reminder_type == "monday":
-            data["route"] = MONDAY_STORY_ROUTE
+        if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
+            apns_category = _STORY_REMINDER_APNS_CATEGORIES[reminder_type]
+            data["route"] = STORY_REMINDER_ROUTE
             data["title"] = title
             data["body"] = body
             print(
-                f"[fcm/monday] preparing push {user_label} token={token_preview} "
-                f"route={MONDAY_STORY_ROUTE} apns_category={MONDAY_NOTIFICATION_CATEGORY} "
-                f"data={data}",
+                f"[fcm/{reminder_type}] preparing push {user_label} token={token_preview} "
+                f"route={STORY_REMINDER_ROUTE} apns_category={apns_category} data={data}",
                 flush=True,
             )
             apns_config = messaging.APNSConfig(
@@ -173,13 +179,13 @@ def send_push(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
                         alert=messaging.ApsAlert(title=title, body=body),
-                        category=MONDAY_NOTIFICATION_CATEGORY,
+                        category=apns_category,
                         sound="default",
                     ),
                 ),
             )
             print(
-                f"[fcm/monday] apns aps.category={MONDAY_NOTIFICATION_CATEGORY!r} "
+                f"[fcm/{reminder_type}] apns aps.category={apns_category!r} "
                 f"(platform-specific alert, no top-level notification field)",
                 flush=True,
             )
@@ -208,9 +214,9 @@ def send_push(
             )
         
         message_id = messaging.send(message)
-        if reminder_type == "monday":
+        if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
             print(
-                f"[fcm/monday] send ok {user_label} token={token_preview} "
+                f"[fcm/{reminder_type}] send ok {user_label} token={token_preview} "
                 f"message_id={message_id} title={title!r} apns_config_set=True",
                 flush=True,
             )
@@ -224,9 +230,9 @@ def send_push(
             )
         return True
     except Exception as e:
-        if reminder_type == "monday":
+        if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
             print(
-                f"[fcm/monday] send FAILED {user_label} token={token_preview} error={e}",
+                f"[fcm/{reminder_type}] send FAILED {user_label} token={token_preview} error={e}",
                 flush=True,
             )
         logger.warning(

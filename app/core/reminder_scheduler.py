@@ -22,6 +22,13 @@ MONDAY_MINUTE = 50
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
+FRIDAY_HOUR = 17
+FRIDAY_MINUTE = 50
+FRIDAY_TITLE = "Your Stories Are Waiting"
+FRIDAY_BODY = "Tap to hear them in your voice."
+
+_STORY_REMINDER_TEST_USER_ID = 237
+
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
     if value is None:
@@ -64,6 +71,59 @@ def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int)
             flush=True,
         )
     return matches
+
+
+def _is_friday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
+    matches = weekday == 4 and (hour, minute) == (FRIDAY_HOUR, FRIDAY_MINUTE)
+    if user_id == _STORY_REMINDER_TEST_USER_ID:
+        print(
+            f"[reminders/friday] time check user_id={user_id} "
+            f"local={hour:02d}:{minute:02d} weekday={weekday} "
+            f"target=Fri {FRIDAY_HOUR:02d}:{FRIDAY_MINUTE:02d} matches={matches}",
+            flush=True,
+        )
+    return matches
+
+
+def _maybe_send_story_reminder(
+    *,
+    token: str,
+    user_id: int,
+    due: bool,
+    reminder_type: str,
+    title: str,
+    body: str,
+    apns_category: str,
+    local_hour: int,
+    local_minute: int,
+    timezone_name: str | None,
+) -> None:
+    if not due:
+        return
+    if user_id == _STORY_REMINDER_TEST_USER_ID:
+        print(
+            f"[reminders/{reminder_type}] sending user_id={user_id} "
+            f"local={local_hour:02d}:{local_minute:02d} tz={timezone_name!r} "
+            f"title={title!r} apns_category={apns_category}",
+            flush=True,
+        )
+        if send_push(token, title, body, reminder_type=reminder_type, user_id=user_id):
+            print(
+                f"[reminders/{reminder_type}] send_push returned ok user_id={user_id}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[reminders/{reminder_type}] send_push FAILED user_id={user_id} — "
+                f"see [fcm/{reminder_type}] prints above",
+                flush=True,
+            )
+    else:
+        print(
+            f"[reminders/{reminder_type}] due at {local_hour:02d}:{local_minute:02d} "
+            f"but skipped (test gate) user_id={user_id}",
+            flush=True,
+        )
 
 
 def _check_and_send_reminders():
@@ -132,35 +192,34 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        monday_due = _is_monday_reminder_time(
-            current_hour, current_minute, current_weekday, user_id
+        _maybe_send_story_reminder(
+            token=token,
+            user_id=user_id,
+            due=_is_monday_reminder_time(
+                current_hour, current_minute, current_weekday, user_id
+            ),
+            reminder_type="monday",
+            title=MONDAY_TITLE,
+            body=MONDAY_BODY,
+            apns_category="MONDAY_STORY",
+            local_hour=current_hour,
+            local_minute=current_minute,
+            timezone_name=timezone_name,
         )
-        if monday_due and user_id == 237:
-            print(
-                f"[reminders/monday] sending user_id={user_id} "
-                f"local={current_hour:02d}:{current_minute:02d} tz={timezone_name!r} "
-                f"title={MONDAY_TITLE!r} apns_category=MONDAY_STORY",
-                flush=True,
-            )
-            if send_push(
-                token, MONDAY_TITLE, MONDAY_BODY, reminder_type="monday", user_id=user_id
-            ):
-                print(
-                    f"[reminders/monday] send_push returned ok user_id={user_id}",
-                    flush=True,
-                )
-            else:
-                print(
-                    f"[reminders/monday] send_push FAILED user_id={user_id} — "
-                    f"see [fcm/monday] prints above",
-                    flush=True,
-                )
-        elif monday_due and user_id != 237:
-            print(
-                f"[reminders/monday] due at {current_hour:02d}:{current_minute:02d} "
-                f"but skipped (test gate) user_id={user_id}",
-                flush=True,
-            )
+        _maybe_send_story_reminder(
+            token=token,
+            user_id=user_id,
+            due=_is_friday_reminder_time(
+                current_hour, current_minute, current_weekday, user_id
+            ),
+            reminder_type="friday",
+            title=FRIDAY_TITLE,
+            body=FRIDAY_BODY,
+            apns_category="FRIDAY_STORY",
+            local_hour=current_hour,
+            local_minute=current_minute,
+            timezone_name=timezone_name,
+        )
 
 
 def start_reminder_scheduler():
@@ -169,7 +228,7 @@ def start_reminder_scheduler():
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
         logger.info(
-            "[reminders] scheduler started (every minute, Monday story reminder at %02d:%02d local)",
+            "[reminders] scheduler started (every minute, Mon/Fri story reminders at %02d:%02d local)",
             MONDAY_HOUR,
             MONDAY_MINUTE,
         )
