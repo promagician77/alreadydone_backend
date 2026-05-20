@@ -22,17 +22,17 @@ MONDAY_MINUTE = 50
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
-FRIDAY_HOUR = 15
-FRIDAY_MINUTE = 50
-FRIDAY_TITLE = "Your Stories Are Waiting"
-FRIDAY_BODY = "Tap to hear them in your voice."
+Thursday_HOUR = 15
+Thursday_MINUTE = 50
+Thursday_TITLE = "Your Stories Are Waiting"
+Thursday_BODY = "Tap to hear them in your voice."
 
 _STORY_REMINDER_TEST_USER_ID = 237
 _TEST_OVERRIDE_WEEKDAY = 2  # Wednesday (Mon=0)
 _TEST_MONDAY_HOUR = 15
 _TEST_MONDAY_MINUTE = 55
-_TEST_FRIDAY_HOUR = 16
-_TEST_FRIDAY_MINUTE = 0
+_TEST_Thursday_HOUR = 16
+_TEST_Thursday_MINUTE = 0
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
@@ -85,19 +85,19 @@ def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int)
     return matches
 
 
-def _is_friday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
-    matches = weekday == 4 and (hour, minute) == (FRIDAY_HOUR, FRIDAY_MINUTE)
+def _is_thursday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
+    matches = weekday == 3 and (hour, minute) == (Thursday_HOUR, Thursday_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         matches = matches or (
             weekday == _TEST_OVERRIDE_WEEKDAY
-            and (hour, minute) == (_TEST_FRIDAY_HOUR, _TEST_FRIDAY_MINUTE)
+            and (hour, minute) == (_TEST_Thursday_HOUR, _TEST_Thursday_MINUTE)
         )
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         print(
-            f"[reminders/friday] time check user_id={user_id} "
+            f"[reminders/Thursday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
-            f"target=Fri {FRIDAY_HOUR:02d}:{FRIDAY_MINUTE:02d} "
-            f"or Wed {_TEST_FRIDAY_HOUR:02d}:{_TEST_FRIDAY_MINUTE:02d} "
+            f"target=Thu {Thursday_HOUR:02d}:{Thursday_MINUTE:02d} "
+            f"or Wed {_TEST_Thursday_HOUR:02d}:{_TEST_Thursday_MINUTE:02d} "
             f"(test user only) matches={matches}",
             flush=True,
         )
@@ -228,13 +228,13 @@ def _check_and_send_reminders():
         _maybe_send_story_reminder(
             token=token,
             user_id=user_id,
-            due=_is_friday_reminder_time(
+            due=_is_thursday_reminder_time(
                 current_hour, current_minute, current_weekday, user_id
             ),
-            reminder_type="friday",
-            title=FRIDAY_TITLE,
-            body=FRIDAY_BODY,
-            apns_category="FRIDAY_STORY",
+            reminder_type="thursday",
+            title=Thursday_TITLE,
+            body=Thursday_BODY,
+            apns_category="Thursday_STORY",
             local_hour=current_hour,
             local_minute=current_minute,
             timezone_name=timezone_name,
@@ -247,7 +247,7 @@ def start_reminder_scheduler():
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
         logger.info(
-            "[reminders] scheduler started (every minute, Mon/Fri story reminders at %02d:%02d local)",
+            "[reminders] scheduler started (every minute, Mon/Thu story reminders at %02d:%02d local)",
             MONDAY_HOUR,
             MONDAY_MINUTE,
         )
