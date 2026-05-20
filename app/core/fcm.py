@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 _fcm_initialized = False
 _fcm_init_failure_logged = False
 
-DAILY_NOTIFICATION_CATEGORY = "DAILY_STORY"
-DAILY_STORY_ROUTE = "/onboarding/desire"
+MONDAY_NOTIFICATION_CATEGORY = "MONDAY_STORY"
+MONDAY_STORY_ROUTE = "/onboarding/desire"
 
 
 def _credentials_diagnostics(cred_path: Path) -> str:
@@ -118,11 +118,11 @@ def send_push(
 ) -> bool:
     """Send a push notification to one FCM token. Returns True if sent successfully."""
     user_label = f"user_id={user_id}" if user_id is not None else "user_id=?"
-    if reminder_type == "daily":
-        print(f"[fcm/daily] send_push called {user_label}", flush=True)
+    if reminder_type == "monday":
+        print(f"[fcm/monday] send_push called {user_label}", flush=True)
     if not token or not token.strip():
-        if reminder_type == "daily":
-            print(f"[fcm/daily] send skipped: no token ({user_label})", flush=True)
+        if reminder_type == "monday":
+            print(f"[fcm/monday] send skipped: no token ({user_label})", flush=True)
         logger.warning(
             "[fcm] send skipped: no token provided (type=%s, %s)",
             reminder_type,
@@ -130,8 +130,8 @@ def send_push(
         )
         return False
     if not _ensure_fcm():
-        if reminder_type == "daily":
-            print(f"[fcm/daily] send skipped: FCM not initialized ({user_label})", flush=True)
+        if reminder_type == "monday":
+            print(f"[fcm/monday] send skipped: FCM not initialized ({user_label})", flush=True)
         if _fcm_init_failure_logged:
             logger.debug(
                 "[fcm] send skipped: not initialized (type=%s, %s)",
@@ -155,16 +155,13 @@ def send_push(
         apns_config = None
         android_config = None
 
-        if reminder_type == "daily":
-            # iOS action buttons require aps.category on the APNS payload. A top-level
-            # FCM `notification` field can prevent category from reaching the device,
-            # so daily uses platform-specific alert text only (no shared notification).
-            data["route"] = DAILY_STORY_ROUTE
+        if reminder_type == "monday":
+            data["route"] = MONDAY_STORY_ROUTE
             data["title"] = title
             data["body"] = body
             print(
-                f"[fcm/daily] preparing push {user_label} token={token_preview} "
-                f"route={DAILY_STORY_ROUTE} apns_category={DAILY_NOTIFICATION_CATEGORY} "
+                f"[fcm/monday] preparing push {user_label} token={token_preview} "
+                f"route={MONDAY_STORY_ROUTE} apns_category={MONDAY_NOTIFICATION_CATEGORY} "
                 f"data={data}",
                 flush=True,
             )
@@ -176,13 +173,13 @@ def send_push(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
                         alert=messaging.ApsAlert(title=title, body=body),
-                        category=DAILY_NOTIFICATION_CATEGORY,
+                        category=MONDAY_NOTIFICATION_CATEGORY,
                         sound="default",
                     ),
                 ),
             )
             print(
-                f"[fcm/daily] apns aps.category={DAILY_NOTIFICATION_CATEGORY!r} "
+                f"[fcm/monday] apns aps.category={MONDAY_NOTIFICATION_CATEGORY!r} "
                 f"(platform-specific alert, no top-level notification field)",
                 flush=True,
             )
@@ -211,9 +208,9 @@ def send_push(
             )
         
         message_id = messaging.send(message)
-        if reminder_type == "daily":
+        if reminder_type == "monday":
             print(
-                f"[fcm/daily] send ok {user_label} token={token_preview} "
+                f"[fcm/monday] send ok {user_label} token={token_preview} "
                 f"message_id={message_id} title={title!r} apns_config_set=True",
                 flush=True,
             )
@@ -227,9 +224,9 @@ def send_push(
             )
         return True
     except Exception as e:
-        if reminder_type == "daily":
+        if reminder_type == "monday":
             print(
-                f"[fcm/daily] send FAILED {user_label} token={token_preview} error={e}",
+                f"[fcm/monday] send FAILED {user_label} token={token_preview} error={e}",
                 flush=True,
             )
         logger.warning(

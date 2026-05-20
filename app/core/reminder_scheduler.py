@@ -17,10 +17,10 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-DAILY_HOUR = 17
-DAILY_MINUTE = 50
-DAILY_TITLE = "Are You Ready for the New Best Day Ever?"
-DAILY_BODY = "It's time to create your new daily manifestation story!"
+MONDAY_HOUR = 17
+MONDAY_MINUTE = 50
+MONDAY_TITLE = "Create Your Story Now"
+MONDAY_BODY = "Then hear it in your voice all day."
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
@@ -44,22 +44,23 @@ def _parse_hour_minute(value) -> tuple[int, int] | None:
         return None
 
 
-def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, int]:
+def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, int, int]:
     tz_str = (user_timezone or "").strip() or "UTC"
     try:
         tz = ZoneInfo(tz_str)
         local = utc_now.astimezone(tz)
-        return local.hour, local.minute
+        return local.hour, local.minute, local.weekday()
     except Exception:
-        return utc_now.hour, utc_now.minute
+        return utc_now.hour, utc_now.minute, utc_now.weekday()
 
-def _is_daily_reminder_time(hour: int, minute: int, user_id: int) -> bool:
-    matches = (hour, minute) == (DAILY_HOUR, DAILY_MINUTE)
+
+def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
+    matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
     if user_id == 237:
         print(
-            f"[reminders/daily] time check user_id={user_id} "
-            f"local={hour:02d}:{minute:02d} target={DAILY_HOUR:02d}:{DAILY_MINUTE:02d} "
-            f"matches={matches}",
+            f"[reminders/monday] time check user_id={user_id} "
+            f"local={hour:02d}:{minute:02d} weekday={weekday} "
+            f"target=Mon {MONDAY_HOUR:02d}:{MONDAY_MINUTE:02d} matches={matches}",
             flush=True,
         )
     return matches
@@ -94,7 +95,9 @@ def _check_and_send_reminders():
         if not token:
             continue
         timezone_name = row.get("timezone")
-        current_hour, current_minute = _get_user_now(now_utc, timezone_name)
+        current_hour, current_minute, current_weekday = _get_user_now(
+            now_utc, timezone_name
+        )
 
         morning_on = row.get("is_MorningTime_Reminder") in (True, "true")
         bedtime_on = row.get("is_BedTime_Reminder") in (True, "true")
@@ -129,31 +132,32 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        daily_due = _is_daily_reminder_time(current_hour, current_minute, user_id)
-        if daily_due and user_id == 237:
+        monday_due = _is_monday_reminder_time(
+            current_hour, current_minute, current_weekday, user_id
+        )
+        if monday_due and user_id == 237:
             print(
-                f"[reminders/daily] sending user_id={user_id} "
+                f"[reminders/monday] sending user_id={user_id} "
                 f"local={current_hour:02d}:{current_minute:02d} tz={timezone_name!r} "
-                f"title={DAILY_TITLE!r} apns_category=DAILY_STORY",
+                f"title={MONDAY_TITLE!r} apns_category=MONDAY_STORY",
                 flush=True,
             )
             if send_push(
-                token, DAILY_TITLE, DAILY_BODY, reminder_type="daily", user_id=user_id
+                token, MONDAY_TITLE, MONDAY_BODY, reminder_type="monday", user_id=user_id
             ):
                 print(
-                    f"[reminders/daily] send_push returned ok user_id={user_id} — "
-                    f"check Xcode for [AlreadyDone/DailyNotification] categoryIdentifier logs",
+                    f"[reminders/monday] send_push returned ok user_id={user_id}",
                     flush=True,
                 )
             else:
                 print(
-                    f"[reminders/daily] send_push FAILED user_id={user_id} — "
-                    f"see [fcm/daily] prints above",
+                    f"[reminders/monday] send_push FAILED user_id={user_id} — "
+                    f"see [fcm/monday] prints above",
                     flush=True,
                 )
-        elif daily_due and user_id != 237:
+        elif monday_due and user_id != 237:
             print(
-                f"[reminders/daily] due at {current_hour:02d}:{current_minute:02d} "
+                f"[reminders/monday] due at {current_hour:02d}:{current_minute:02d} "
                 f"but skipped (test gate) user_id={user_id}",
                 flush=True,
             )
@@ -165,9 +169,9 @@ def start_reminder_scheduler():
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
         logger.info(
-            "[reminders] scheduler started (every minute, daily at %02d:%02d local)",
-            DAILY_HOUR,
-            DAILY_MINUTE,
+            "[reminders] scheduler started (every minute, Monday story reminder at %02d:%02d local)",
+            MONDAY_HOUR,
+            MONDAY_MINUTE,
         )
 
 
