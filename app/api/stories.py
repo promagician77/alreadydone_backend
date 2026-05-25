@@ -1,5 +1,6 @@
 """Stories endpoint: list stories for a user; generate story theme and story via Claude."""
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,8 +30,10 @@ class GenerateStoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def check_energy_and_category(self):
-        print(f"self.energyWord: {self.energyWord}")
-        print(f"self.desireCategory: {self.desireCategory}")
+        print(
+            "[stories.generate] request body:",
+            json.dumps(self.model_dump(), default=str),
+        )
         if self.energyWord not in ENERGY_WORDS:
             raise ValueError(f"energyWord must be one of: {ENERGY_WORDS}")
         if self.desireCategory not in CATEGORIES:
@@ -270,13 +273,17 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
+    payload = body.model_dump()
+    print(
+        "[stories.generate] request body (handler):",
+        json.dumps(payload, default=str),
+    )
     logging.info(
         "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s",
         body.user_id,
         body.energyWord,
         body.desireCategory,
     )
-    print(f"body: {body}")
     user_id = body.user_id
     name = body.name
     location = body.location
