@@ -8,7 +8,6 @@ import json as _json
 import wave
 import math
 import struct
-import asyncio
 from datetime import datetime, timezone
 
 import httpx
@@ -578,71 +577,73 @@ async def speak(request: SpeakRequest):
         except Exception:
             logging.exception("Failed to clear cached audio fields for story %s", request.story_id)
 
-    async def _run_generation() -> None:
-        job_started = time.perf_counter()
-        _agent_log(
-            hypothesis_id="A",
-            location="app/api/voice.py:generate_audio:bg_start",
-            message="generate_audio background job start",
-            data={"storyId": request.story_id},
-        )
-        try:
-            await generate_and_store_story_audio(
-                story_id=request.story_id,
-                voice_id=request.voice_id,
-                model_id=request.model_id,
-                output_format=request.output_format,
-                seed=request.seed,
-                voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
-                apply_postprocess=True,
-            )
-            print('generate_and_store_story_audio success')
-            _agent_log(
-                hypothesis_id="A",
-                location="app/api/voice.py:generate_audio:bg_success",
-                message="generate_audio background job success",
-                data={
-                    "storyId": request.story_id,
-                    "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
-                },
-            )
-        except Exception as e:
-            error_detail = str(e)
-            if isinstance(e, httpx.HTTPStatusError):
-                try:
-                    error_detail = f"HTTP {e.response.status_code}: {e.response.text}"
-                except Exception:
-                    error_detail = str(e)
-            if error_detail and len(error_detail) > 1500:
-                error_detail = error_detail[:1500]
-            _agent_log(
-                hypothesis_id="A",
-                location="app/api/voice.py:generate_audio:bg_error",
-                message="generate_audio background job error",
-                data={
-                    "storyId": request.story_id,
-                    "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
-                    "errorType": type(e).__name__,
-                    "errorDetail": error_detail,
-                },
-            )
-
-    asyncio.create_task(_run_generation())
+    job_started = time.perf_counter()
     _agent_log(
         hypothesis_id="A",
-        location="app/api/voice.py:generate_audio:accepted",
-        message="generate_audio accepted; returning 202",
+        location="app/api/voice.py:generate_audio:sync_start",
+        message="generate_audio synchronous generation start",
+        data={"storyId": request.story_id},
+    )
+    try:
+        result = await generate_and_store_story_audio(
+            story_id=request.story_id,
+            voice_id=request.voice_id,
+            model_id=request.model_id,
+            output_format=request.output_format,
+            seed=request.seed,
+            voice_settings=request.voice_settings.model_dump(exclude_none=True) if request.voice_settings else None,
+            apply_postprocess=True,
+        )
+    except Exception as e:
+        error_detail = str(e)
+        if isinstance(e, httpx.HTTPStatusError):
+            try:
+                error_detail = f"HTTP {e.response.status_code}: {e.response.text}"
+            except Exception:
+                error_detail = str(e)
+        if error_detail and len(error_detail) > 1500:
+            error_detail = error_detail[:1500]
+        _agent_log(
+            hypothesis_id="A",
+            location="app/api/voice.py:generate_audio:sync_error",
+            message="generate_audio synchronous generation error",
+            data={
+                "storyId": request.story_id,
+                "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
+                "errorType": type(e).__name__,
+                "errorDetail": error_detail,
+            },
+        )
+        if isinstance(e, httpx.HTTPStatusError):
+            _raise_http_from_httpx(e)
+        raise HTTPException(status_code=502, detail=f"Audio generation failed: {error_detail}")
+
+    play_url = ((result or {}).get("url") or "").strip() if result else ""
+    if not play_url:
+        _agent_log(
+            hypothesis_id="A",
+            location="app/api/voice.py:generate_audio:sync_empty",
+            message="generate_audio produced no play URL",
+            data={
+                "storyId": request.story_id,
+                "elapsedMs": round((time.perf_counter() - job_started) * 1000, 2),
+            },
+        )
+        raise HTTPException(status_code=502, detail="Audio generation produced no play URL")
+
+    content_type = (result or {}).get("content_type") or "audio/mpeg"
+    response_body: dict = {"url": play_url, "content_type": content_type}
+    play_length = (result or {}).get("play_length")
+    if play_length is not None:
+        response_body["play_length"] = play_length
+
+    _agent_log(
+        hypothesis_id="A",
+        location="app/api/voice.py:generate_audio:sync_success",
+        message="generate_audio returned new playUrl",
         data={
             "storyId": request.story_id,
             "elapsedMs": round((time.perf_counter() - started_at) * 1000, 2),
         },
     )
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content={
-            "status": "started",
-            "story_id": request.story_id,
-            "url": None,
-            "detail": "Audio generation started. Poll /api/voice/speak/{story_id} for playUrl.",
-        },
-    )
+    return response_body
