@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.core.debug_user import debug_log, is_debug_email
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -61,6 +62,8 @@ async def signup(body: SignupRequest):
     """Create a new user with email and password. Returns user id, email, and access_token."""
     supabase = get_supabase()
     email_lower = body.email.strip().lower()
+    if is_debug_email(email_lower):
+        debug_log("auth.signup", "start", email=email_lower)
     r = supabase.table("Users").select("id").eq("email", email_lower).execute()
     if r.data and len(r.data) > 0:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -88,6 +91,7 @@ async def signup(body: SignupRequest):
     except ValueError as e:
         raise HTTPException(status_code=503, detail="Auth is not configured")
 
+    debug_log("auth.signup", "success", user_id=user_id, email=email_lower, supabase=supabase)
     return {
         "user_id": user_id,
         "email": email_lower,
@@ -100,15 +104,20 @@ async def login(body: LoginRequest):
     """Authenticate with email and password. Returns user id, email, and access_token."""
     supabase = get_supabase()
     email_lower = body.email.strip().lower()
+    if is_debug_email(email_lower):
+        debug_log("auth.login", "start", email=email_lower)
     r = supabase.table("Users").select("id", "email", "password").eq("email", email_lower).execute()
     rows = list(r.data or [])
     if not rows:
+        debug_log("auth.login", "no_user", email=email_lower)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     user = rows[0]
     stored_hash = user.get("password")
     if not stored_hash:
+        debug_log("auth.login", "no_password_hash", email=email_lower, user_id=user.get("id"))
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not _verify_password(body.password, stored_hash):
+        debug_log("auth.login", "bad_password", email=email_lower, user_id=user.get("id"))
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     user_id = user.get("id") or user.get("Id")
@@ -121,6 +130,7 @@ async def login(body: LoginRequest):
     except ValueError as e:
         raise HTTPException(status_code=503, detail="Auth is not configured")
 
+    debug_log("auth.login", "success", user_id=user_id, email=email_lower, supabase=supabase)
     return {
         "user_id": user_id,
         "email": email_lower,

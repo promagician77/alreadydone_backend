@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.db_utils import safe_partial_update
+from app.core.debug_user import debug_log, user_id_from_story
 from app.core.elevenlabs import add_voice, text_to_speech
 from app.core.story_audio import generate_and_store_story_audio
 from app.core.supabase_client import get_supabase
@@ -353,6 +354,16 @@ async def clone_voice(
     description: str | None = Form(None),
 ):
     """Create a voice clone from uploaded audio; returns ElevenLabs voice_id."""
+    supabase = get_supabase()
+    debug_log(
+        "voice.clone",
+        "start",
+        user_id=user_id,
+        supabase=supabase,
+        name=name,
+        file_count=len(files),
+        remove_background_noise=remove_background_noise,
+    )
     if not files:
         raise HTTPException(status_code=400, detail="At least one audio file is required")
     if len(files) > settings.VOICE_CLONE_MAX_FILES:
@@ -426,8 +437,17 @@ async def clone_voice(
         except Exception:
             logging.exception("Failed to persist clone diagnostics for user %s", user_id)
         result["diagnostics"] = diagnostics
+        debug_log(
+            "voice.clone",
+            "success",
+            user_id=user_id,
+            supabase=supabase,
+            voice_id=result.get("voice_id"),
+            diagnostics=diagnostics,
+        )
         return result
     except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        debug_log("voice.clone", "error", user_id=user_id, supabase=supabase, error=str(e))
         try:
             safe_partial_update(
                 table_name="Users",
@@ -494,6 +514,8 @@ class SpeakRequest(BaseModel):
 async def get_story_play_url(story_id: int):
     """Return the playUrl for the given story_id. 404 if story not found or playUrl not set."""
     supabase = get_supabase()
+    uid = user_id_from_story(supabase, story_id)
+    debug_log("voice.speak", "start", user_id=uid, supabase=supabase, story_id=story_id)
     r = supabase.table("Stories").select("playUrl").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
     rows = list(r.data or [])
     if not rows:
@@ -501,13 +523,27 @@ async def get_story_play_url(story_id: int):
     row = rows[0]
     play_url = (row.get("playUrl") or "").strip()
     if not play_url:
+        debug_log("voice.speak", "no_play_url", user_id=uid, supabase=supabase, story_id=story_id)
         raise HTTPException(status_code=404, detail="Story has no play URL yet")
+    debug_log("voice.speak", "success", user_id=uid, supabase=supabase, story_id=story_id, play_url=play_url)
     return {"playUrl": play_url}
 
 
 @router.post("/generate_audio")
 async def speak(request: SpeakRequest):
     started_at = time.perf_counter()
+    supabase = get_supabase()
+    uid = user_id_from_story(supabase, request.story_id)
+    debug_log(
+        "voice.generate_audio",
+        "start",
+        user_id=uid,
+        supabase=supabase,
+        story_id=request.story_id,
+        voice_id=request.voice_id,
+        force_regenerate=request.force_regenerate,
+        model_id=request.model_id,
+    )
     _agent_log(
         hypothesis_id="A",
         location="app/api/voice.py:generate_audio:entry",
@@ -523,12 +559,8 @@ async def speak(request: SpeakRequest):
         },
     )
 
-    print('request.force_regenerate: ', request.force_regenerate)
-
     if not request.force_regenerate:
-        print('not request.force_regenerate')
         try:
-            supabase = get_supabase()
             existing = (
                 supabase.table("Stories")
                 .select("playUrl")
@@ -539,6 +571,14 @@ async def speak(request: SpeakRequest):
             rows = list(existing.data or [])
             play_url = (rows[0].get("playUrl") or "").strip() if rows else ""
             if play_url:
+                debug_log(
+                    "voice.generate_audio",
+                    "cached",
+                    user_id=uid,
+                    supabase=supabase,
+                    story_id=request.story_id,
+                    play_url=play_url,
+                )
                 _agent_log(
                     hypothesis_id="A",
                     location="app/api/voice.py:generate_audio:cached",
@@ -595,6 +635,14 @@ async def speak(request: SpeakRequest):
             apply_postprocess=True,
         )
     except Exception as e:
+        debug_log(
+            "voice.generate_audio",
+            "error",
+            user_id=uid,
+            supabase=supabase,
+            story_id=request.story_id,
+            error=str(e),
+        )
         error_detail = str(e)
         if isinstance(e, httpx.HTTPStatusError):
             try:
@@ -637,6 +685,15 @@ async def speak(request: SpeakRequest):
     if play_length is not None:
         response_body["play_length"] = play_length
 
+    debug_log(
+        "voice.generate_audio",
+        "success",
+        user_id=uid,
+        supabase=supabase,
+        story_id=request.story_id,
+        play_url=play_url,
+        play_length=play_length,
+    )
     _agent_log(
         hypothesis_id="A",
         location="app/api/voice.py:generate_audio:sync_success",

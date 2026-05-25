@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Request, HTTPException, Header
 
 from app.core.config import settings
+from app.core.debug_user import debug_log
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/revenuecat", tags=["revenuecat"])
@@ -85,6 +86,16 @@ async def revenuecat_webhook(
         logging.warning("RevenueCat webhook invalid app_user_id: %s", app_user_id)
         return {"received": True}
 
+    supabase = get_supabase()
+    debug_log(
+        "revenuecat.webhook",
+        "event",
+        user_id=user_id,
+        supabase=supabase,
+        event_type=event_type,
+        app_user_id=app_user_id,
+    )
+
     rc_status = _rc_status_from_event(event_type)
     product_id = body.get("product_id") or body.get("new_product_id") or ""
     if isinstance(product_id, list):
@@ -100,11 +111,19 @@ async def revenuecat_webhook(
     # Keep rc_customer_id in sync with app_user_id so we can look up by it
     update_payload["rc_customer_id"] = str(app_user_id).strip()
 
-    supabase = get_supabase()
     try:
         supabase.table("Users").update(update_payload).eq("id", user_id).execute()
     except Exception as e:
+        debug_log("revenuecat.webhook", "error", user_id=user_id, supabase=supabase, error=str(e))
         logging.exception("RevenueCat webhook update user %s failed: %s", user_id, e)
         raise HTTPException(status_code=502, detail="Failed to update user")
 
+    debug_log(
+        "revenuecat.webhook",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        rc_status=rc_status,
+        update_payload=update_payload,
+    )
     return {"received": True}

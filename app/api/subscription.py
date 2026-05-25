@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 import stripe
 from app.core.config import settings
+from app.core.debug_user import debug_log
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/subscription", tags=["subscription"])
@@ -63,6 +64,13 @@ async def create_setup_intent(body: CreateSetupIntentRequest):
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
     supabase = get_supabase()
+    debug_log(
+        "subscription.setup_intent",
+        "start",
+        user_id=body.user_id,
+        supabase=supabase,
+        customer_email=body.customer_email,
+    )
 
     r = supabase.table("Users").select("stripe_customer_id").eq("id", body.user_id).execute()
     rows = list(r.data or [])
@@ -106,6 +114,13 @@ async def create_setup_intent(body: CreateSetupIntentRequest):
     except Exception as e:
         logging.warning("Failed to store setup_intent_id for user %s: %s", body.user_id, e)
 
+    debug_log(
+        "subscription.setup_intent",
+        "success",
+        user_id=body.user_id,
+        supabase=supabase,
+        setup_intent_id=setup_intent.id,
+    )
     return {
         "client_secret": setup_intent.client_secret,
         "setup_intent_id": setup_intent.id,
@@ -132,6 +147,13 @@ async def create_subscription(body: CreateSubscriptionRequest):
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
     supabase = get_supabase()
+    debug_log(
+        "subscription.create",
+        "start",
+        user_id=body.user_id,
+        supabase=supabase,
+        plan=body.plan,
+    )
 
     # 1) Load user: stripe_customer_id, stripe_subscription_id
     r = supabase.table("Users").select("stripe_customer_id", "stripe_subscription_id").eq("id", body.user_id).execute()
@@ -245,6 +267,15 @@ async def create_subscription(body: CreateSubscriptionRequest):
     except Exception as e:
         logging.exception("Failed to update Users with subscription: %s", e)
 
+    debug_log(
+        "subscription.create",
+        "success",
+        user_id=body.user_id,
+        supabase=supabase,
+        subscription_id=sub.id,
+        status=status,
+        plan=plan,
+    )
     return {
         "subscription_id": sub.id,
         "status": status,
@@ -256,6 +287,7 @@ async def create_subscription(body: CreateSubscriptionRequest):
 async def subscription_status(user_id: int = Query(..., description="App user id")):
     """Return stripe_customer_id, stripe_subscription_id, intent_id (setup_intent_id), subscription_status, subscription_plan. Syncs with Stripe on each call."""
     supabase = get_supabase()
+    debug_log("subscription.status", "start", user_id=user_id, supabase=supabase)
     r = supabase.table("Users").select(
         "id",
         "stripe_customer_id",
@@ -287,6 +319,14 @@ async def subscription_status(user_id: int = Query(..., description="App user id
             except Exception as e:
                 logging.exception("Failed to sync subscription status to DB: %s", e)
 
+    debug_log(
+        "subscription.status",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        subscription_status=status,
+        subscription_plan=plan,
+    )
     return {
         "stripe_customer_id": row.get("stripe_customer_id") or row.get("stripe_customer_Id"),
         "stripe_subscription_id": subscription_id,
@@ -307,6 +347,7 @@ async def cancel_subscription_during_trial(body: CancelSubscriptionRequest):
         raise HTTPException(status_code=503, detail="Stripe is not configured")
     supabase = get_supabase()
     user_id = body.user_id
+    debug_log("subscription.cancel", "start", user_id=user_id, supabase=supabase)
     r = supabase.table("Users").select("stripe_subscription_id").eq("id", user_id).execute()
     rows = list(r.data or [])
     if not rows:
@@ -332,6 +373,7 @@ async def cancel_subscription_during_trial(body: CancelSubscriptionRequest):
         supabase.table("Users").update({"subscription_status": "canceled"}).eq("id", user_id).execute()
     except Exception as e:
         logging.exception("Failed to update user subscription_status: %s", e)
+    debug_log("subscription.cancel", "success", user_id=user_id, supabase=supabase)
     return {"ok": True, "message": "Subscription canceled within free trial."}
 
 
@@ -353,6 +395,7 @@ async def change_plan(body: ChangePlanRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     supabase = get_supabase()
+    debug_log("subscription.change_plan", "start", user_id=body.user_id, supabase=supabase, plan=body.plan)
     r = supabase.table("Users").select("stripe_subscription_id").eq("id", body.user_id).execute()
     rows = list(r.data or [])
     if not rows:
@@ -397,6 +440,14 @@ async def change_plan(body: ChangePlanRequest):
         }).eq("id", body.user_id).execute()
     except Exception as e:
         logging.exception("Failed to update user after change plan: %s", e)
+    debug_log(
+        "subscription.change_plan",
+        "success",
+        user_id=body.user_id,
+        supabase=supabase,
+        plan=plan,
+        status=status,
+    )
     return {
         "ok": True,
         "subscription_id": subscription_id,

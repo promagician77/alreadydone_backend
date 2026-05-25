@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.subscription import _fetch_subscription_from_stripe
 from app.core.config import settings
+from app.core.debug_user import debug_log, is_debug_email
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -112,6 +113,7 @@ def _get_first_story_datetime_utc(supabase, user_id: int) -> datetime | None:
 @router.get("/{user_id}")
 async def get_user_info(user_id: int):
     supabase = get_supabase()
+    debug_log("users.get", "start", user_id=user_id, supabase=supabase)
     r = supabase.table("Users").select("*").eq("id", user_id).execute()
     rows = list(r.data or [])
     if not rows:
@@ -145,6 +147,14 @@ async def get_user_info(user_id: int):
     first_story_dt = _get_first_story_datetime_utc(supabase, user_id)
     user["days_since_first_story"] = _days_since(first_story_dt)
     user["active"] = active
+    debug_log(
+        "users.get",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        story_count=story_count,
+        day_streak=user["day_streak"],
+    )
     return user
 
 
@@ -170,6 +180,14 @@ class UserUpdateRequest(BaseModel):
 
 @router.patch("/{user_id}")
 async def update_user(user_id: str, body: UserUpdateRequest):
+    supabase = get_supabase()
+    debug_log(
+        "users.patch",
+        "start",
+        user_id=user_id,
+        supabase=supabase,
+        body=body.model_dump(exclude_none=True),
+    )
     payload = {}
     if body.speed is not None:
         payload["speed"] = body.speed
@@ -198,7 +216,6 @@ async def update_user(user_id: str, body: UserUpdateRequest):
     if body.fcm_token is not None:
         payload["fcm_token"] = body.fcm_token
     if body.timezone is not None:
-        print(f"timezone: {body.timezone}")
         payload["timezone"] = body.timezone
     if body.rc_customer_id is not None:
         payload["rc_customer_id"] = body.rc_customer_id
@@ -209,15 +226,13 @@ async def update_user(user_id: str, body: UserUpdateRequest):
     if body.subscription_provider is not None:
         payload["subscription_provider"] = body.subscription_provider
 
-    print(payload)
-
     if not payload:
         raise HTTPException(status_code=400, detail="Provide at least one field to update")
 
-    supabase = get_supabase()
     try:
         r = supabase.table("Users").update(payload).eq("id", user_id).execute()
     except Exception as e:
+        debug_log("users.patch", "error", user_id=user_id, supabase=supabase, error=str(e))
         raise HTTPException(status_code=502, detail=f"Supabase error: {e}")
 
     try:
@@ -225,6 +240,7 @@ async def update_user(user_id: str, body: UserUpdateRequest):
     except (TypeError, ValueError):
         uid = None
     day_streak = _get_streak_days(supabase, uid) if uid is not None else 0
+    debug_log("users.patch", "success", user_id=user_id, supabase=supabase, payload=payload)
     return {"updated": True, "data": r.data, "day_streak": day_streak}
 
 
@@ -284,6 +300,9 @@ async def close_account(
     Requires a valid Supabase access token in Authorization header.
     No JSON body required (avoids 422 when clients POST with an empty body).
     """
+    supabase = get_supabase()
+    debug_log("users.close_account", "start", user_id=user_id, supabase=supabase)
+
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization")
 
@@ -296,7 +315,8 @@ async def close_account(
     if not token_uid or not token_email:
         raise HTTPException(status_code=401, detail="Invalid user token")
 
-    supabase = get_supabase()
+    if is_debug_email(token_email):
+        debug_log("users.close_account", "auth_ok", user_id=user_id, email=token_email)
 
     # Verify Users row belongs to this auth user (by email).
     ur = supabase.table("Users").select("id,email").eq("id", user_id).execute()
@@ -344,4 +364,5 @@ async def close_account(
     except Exception as e:
         logging.warning("Auth user delete failed: %s", e)
 
+    debug_log("users.close_account", "success", user_id=user_id, supabase=supabase)
     return {"ok": True, "deleted_user_id": user_id}

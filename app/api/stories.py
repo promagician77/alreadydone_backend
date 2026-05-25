@@ -1,6 +1,5 @@
 """Stories endpoint: list stories for a user; generate story theme and story via Claude."""
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -11,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.claude import generate_story, generate_deepen_story
 from app.core.config import CATEGORIES, ENERGY_WORDS
 from app.core.db_utils import safe_partial_update
+from app.core.debug_user import debug_log
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -30,10 +30,6 @@ class GenerateStoryRequest(BaseModel):
 
     @model_validator(mode="after")
     def check_energy_and_category(self):
-        print(
-            "[stories.generate] request body:",
-            json.dumps(self.model_dump(), default=str),
-        )
         if self.energyWord not in ENERGY_WORDS:
             raise ValueError(f"energyWord must be one of: {ENERGY_WORDS}")
         if self.desireCategory not in CATEGORIES:
@@ -79,14 +75,16 @@ def _annotate_story_row(row: dict) -> dict:
 @router.get("")
 async def get_stories(user_id: str = Query(..., description="Filter stories by this user ID")):
     supabase = get_supabase()
+    debug_log("stories.get", "start", user_id=user_id, supabase=supabase)
     try:
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be an integer")
 
-    # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories.
+    # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories with voice_id set.
     r = supabase.table("Stories").select("*").eq("user_id", uid).or_("is_deleted.eq.false,is_deleted.is.null").execute()
     rows = list(r.data or [])
+    rows = [s for s in rows if _story_voice_id(s)]
     if not rows:
         return {"stories": []}
 
@@ -102,6 +100,13 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
         item["desire_name"] = name_by_id.get(row.get("desire_id"))
         annotated.append(item)
 
+    debug_log(
+        "stories.get",
+        "success",
+        user_id=uid,
+        supabase=supabase,
+        story_count=len(annotated),
+    )
     return {"stories": annotated}
 
 
@@ -112,6 +117,13 @@ async def delete_story(
 ):
     """Soft-delete a story by id (sets is_deleted). Optionally pass user_id to ensure ownership."""
     supabase = get_supabase()
+    debug_log(
+        "stories.delete",
+        "start",
+        user_id=user_id,
+        supabase=supabase,
+        story_id=story_id,
+    )
     r = supabase.table("Stories").select("id", "user_id").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null,voice_id.is.null").execute()
     rows = list(r.data or [])
     if not rows:
@@ -124,7 +136,22 @@ async def delete_story(
     try:
         supabase.table("Stories").update({"is_deleted": True}).eq("id", story_id).execute()
     except Exception as e:
+        debug_log(
+            "stories.delete",
+            "error",
+            user_id=user_id,
+            supabase=supabase,
+            story_id=story_id,
+            error=str(e),
+        )
         raise HTTPException(status_code=502, detail=f"Failed to delete story: {e!s}")
+    debug_log(
+        "stories.delete",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        story_id=story_id,
+    )
     return {"ok": True, "story_id": story_id}
 
 
@@ -169,19 +196,31 @@ def _tzinfo_from_user_timezone(value: str | None):
         return timezone.utc, "UTC"
 
 
-def _local_day_window_utc(user_timezone: str | None) -> tuple[str, str, str]:
+def _local_day_window_utc(
+    user_timezone: str | None,
+    *,
+    user_id: int | None = None,
+    supabase=None,
+) -> tuple[str, str, str]:
     tz, resolved_timezone = _tzinfo_from_user_timezone(user_timezone)
-    print(f"tz: {tz}, resolved_timezone: {resolved_timezone}")
     now_utc = datetime.now(timezone.utc)
-    print(f"now_utc: {now_utc}")
     local_now = now_utc.astimezone(tz)
-    print(f"local_now: {local_now}")
     local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     local_end = local_start + timedelta(days=1)
-    print(f"local_start: {local_start}, local_end: {local_end}")
     start_utc = local_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     end_utc = local_end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    print(f"start_utc: {start_utc}, end_utc: {end_utc}")
+    debug_log(
+        "stories.limit.window",
+        "computed",
+        user_id=user_id,
+        supabase=supabase,
+        tz=str(tz),
+        resolved_timezone=resolved_timezone,
+        now_utc=now_utc.isoformat(),
+        local_now=local_now.isoformat(),
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
     logging.info(
         "[stories.limit] timezone=%s local_now=%s start_utc=%s end_utc=%s",
         resolved_timezone,
@@ -221,10 +260,30 @@ def _get_user_timezone(supabase, user_id: int, request_timezone: str | None = No
 
 
 def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | None = None, source: str = "generate") -> None:
+    debug_log(
+        "stories.limit",
+        "check_start",
+        user_id=user_id,
+        supabase=supabase,
+        source=source,
+        request_timezone=request_timezone,
+    )
     user_timezone, _ = _get_user_timezone(supabase, user_id, request_timezone)
-    today_start, tomorrow_start, resolved_timezone = _local_day_window_utc(user_timezone)
-    print(f"today_start: {today_start}, tomorrow_start: {tomorrow_start}, resolved_timezone: {resolved_timezone}")
-    print(f"user_timezone: {user_timezone}")
+    today_start, tomorrow_start, resolved_timezone = _local_day_window_utc(
+        user_timezone,
+        user_id=user_id,
+        supabase=supabase,
+    )
+    debug_log(
+        "stories.limit",
+        "window",
+        user_id=user_id,
+        supabase=supabase,
+        user_timezone=user_timezone,
+        today_start=today_start,
+        tomorrow_start=tomorrow_start,
+        resolved_timezone=resolved_timezone,
+    )
 
     r_today = (
         supabase.table("Stories")
@@ -247,6 +306,14 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
     )
 
     if count_today >= 1 and user_id != 242 and user_id != 237:
+        debug_log(
+            "stories.limit",
+            "blocked",
+            user_id=user_id,
+            supabase=supabase,
+            count_today=count_today,
+            resolved_timezone=resolved_timezone,
+        )
         raise HTTPException(
             status_code=403,
             detail=(
@@ -254,6 +321,13 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
                 f"Your day resets at midnight in {resolved_timezone}."
             ),
         )
+    debug_log(
+        "stories.limit",
+        "allowed",
+        user_id=user_id,
+        supabase=supabase,
+        count_today=count_today,
+    )
 
 def _get_desire_id_by_name(supabase, category: str) -> int:
     """Look up Desires.id by Desires.desireCategory. Raises if not found."""
@@ -273,16 +347,19 @@ def _get_desire_id_by_name(supabase, category: str) -> int:
 
 @router.post("/generate")
 async def generate_story_content(body: GenerateStoryRequest):
-    payload = body.model_dump()
-    print(
-        "[stories.generate] request body (handler):",
-        json.dumps(payload, default=str),
-    )
     logging.info(
         "[stories.generate] start user_id=%s energyWord=%s desireCategory=%s",
         body.user_id,
         body.energyWord,
         body.desireCategory,
+    )
+    supabase = get_supabase()
+    debug_log(
+        "stories.generate",
+        "start",
+        user_id=body.user_id,
+        supabase=supabase,
+        body=body.model_dump(),
     )
     user_id = body.user_id
     name = body.name
@@ -292,8 +369,6 @@ async def generate_story_content(body: GenerateStoryRequest):
     desireDescription = body.desireDescription
     lovedOne = body.lovedOne
     timezone = body.timezone
-
-    supabase = get_supabase()
 
     _enforce_daily_story_limit(supabase, user_id, timezone, source="generate")
 
@@ -319,12 +394,22 @@ async def generate_story_content(body: GenerateStoryRequest):
             previousStoryThemes=previous_story_themes,
         )
     except ValueError as e:
+        debug_log("stories.generate", "claude_value_error", user_id=user_id, supabase=supabase, error=str(e))
         if "ANTHROPIC_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="Story generation is not configured")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        debug_log("stories.generate", "claude_error", user_id=user_id, supabase=supabase, error=str(e))
         raise HTTPException(status_code=502, detail=f"Story generation failed: {e!s}")
 
+    debug_log(
+        "stories.generate",
+        "claude_ok",
+        user_id=user_id,
+        supabase=supabase,
+        theme=theme,
+        story_len=len(story or ""),
+    )
     try:
         r = supabase.table("Stories").insert({
             "theme": theme,
@@ -333,6 +418,7 @@ async def generate_story_content(body: GenerateStoryRequest):
             "story": story,
         }).execute()
     except Exception as e:
+        debug_log("stories.generate", "insert_error", user_id=user_id, supabase=supabase, error=str(e))
         raise HTTPException(status_code=502, detail=f"Failed to store story: {e!s}")
 
     rows = list(r.data or [])
@@ -353,6 +439,13 @@ async def generate_story_content(body: GenerateStoryRequest):
             )
         except Exception:
             logging.exception("Failed to persist story generation metadata for story %s", created_id)
+    debug_log(
+        "stories.generate",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        story_id=created_id,
+    )
     return {
         "id": created_id,
         "theme": theme,
@@ -364,59 +457,62 @@ async def deepen_story(body: DeepenStoryRequest):
     supabase = get_supabase()
     user_id = body.user_id
     story_id = body.story_id
+    debug_log(
+        "stories.deepen",
+        "start",
+        user_id=user_id,
+        supabase=supabase,
+        body=body.model_dump(),
+    )
 
     # Load story and verify ownership (include parent_story_id to resolve root)
     r_orig = supabase.table("Stories").select("id", "user_id", "theme", "story", "desire_id", "voice_id", "parent_story_id").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-    print(f"r_orig: {r_orig}")
     orig_rows = list(r_orig.data or [])
     if not orig_rows:
+        debug_log("stories.deepen", "not_found", user_id=user_id, supabase=supabase, story_id=story_id)
         raise HTTPException(status_code=404, detail="Story not found")
-    print(f"orig_rows: {orig_rows}")
     orig = orig_rows[0]
     story_user_id = orig.get("user_id") or orig.get("userId")
     if story_user_id != user_id:
+        debug_log("stories.deepen", "forbidden", user_id=user_id, supabase=supabase, story_id=story_id)
         raise HTTPException(status_code=403, detail="Story does not belong to this user")
-    print(f"orig: {orig}")
     desire_id = orig.get("desire_id")
     if desire_id is None:
         raise HTTPException(status_code=400, detail="Original story has no desire_id")
-    print(f"desire_id: {desire_id}")
     # Resolve root story (Option A: always use root for theme and counting so numbering is #1, #2, #3)
     root = orig
     while root.get("parent_story_id") is not None:
-        print(f"root: {root}")
         parent_id = root.get("parent_story_id") or root.get("parent_story_Id")
         r_parent = supabase.table("Stories").select("id", "theme", "story", "voice_id", "parent_story_id").eq("id", parent_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-        print(f"r_parent: {r_parent}")
         parent_rows = list(r_parent.data or [])
         if not parent_rows:
             break
-        print(f"parent_rows: {parent_rows}")
         root = parent_rows[0]
     root_id = root.get("id") or root.get("Id")
     original_theme = (root.get("theme") or "").strip() or "Manifestation"
     root_story_text = (root.get("story") or "").strip()
-    print(f"root_id: {root_id}")
-    print(f"original_theme: {original_theme}")
-    print(f"root_story_text: {root_story_text}")
+    debug_log(
+        "stories.deepen",
+        "root_resolved",
+        user_id=user_id,
+        supabase=supabase,
+        root_id=root_id,
+        original_theme=original_theme,
+    )
     # Get desire category for prompt
     dr = supabase.table("Desires").select("desireCategory").eq("id", desire_id).execute()
     desire_rows = list(dr.data or [])
     original_desire_category = desire_rows[0].get("desireCategory", "Life") if desire_rows else "Life"
-    print(f"original_desire_category: {original_desire_category}")
     # Existing deepenings under the root (so count is 1, 2, 3...)
     r_deepen = supabase.table("Stories").select("id", "story", "deepening_level").eq("parent_story_id", root_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
     deepen_rows = list(r_deepen.data or [])
-    print(f"deepen_rows: {deepen_rows}")
     def _level(row):
         v = row.get("deepening_level") or row.get("deepeningLevel") or 0
         return int(v) if v is not None else 0
     deepen_rows.sort(key=_level)
     previous_story_text = (deepen_rows[-1].get("story") or "").strip() if deepen_rows else root_story_text
     deepening_count = len(deepen_rows) + 1
-    print(f"deepening_count: {deepening_count}")
     _enforce_daily_story_limit(supabase, user_id, body.timezone, source="deepen")
-    print(f"body.timezone: {body.timezone}")
     try:
         theme, story, generation_meta = await generate_deepen_story(
             user_name=body.name,
@@ -428,18 +524,25 @@ async def deepen_story(body: DeepenStoryRequest):
             previous_story_text=previous_story_text or "(No previous story)",
             deepening_count=deepening_count,
         )
-        print(f"generate_deepen_story result: {theme, story, generation_meta}")
+        debug_log(
+            "stories.deepen",
+            "claude_ok",
+            user_id=user_id,
+            supabase=supabase,
+            theme=theme,
+            story_len=len(story or ""),
+        )
     except ValueError as e:
-        print(f"generate_deepen_story ValueError: {e}")
+        debug_log("stories.deepen", "claude_value_error", user_id=user_id, supabase=supabase, error=str(e))
         if "ANTHROPIC_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="Story generation is not configured")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"generate_deepen_story Exception: {e}")
+        debug_log("stories.deepen", "claude_error", user_id=user_id, supabase=supabase, error=str(e))
         raise HTTPException(status_code=502, detail=f"Deepen story generation failed: {e!s}")
 
     orig_voice_id = (root.get("voice_id") or root.get("voiceId") or "").strip()
-    print(f"orig_voice_id: {orig_voice_id}")
+    debug_log("stories.deepen", "voice_id", user_id=user_id, supabase=supabase, orig_voice_id=orig_voice_id)
     insert_payload = {
         "theme": theme,
         "user_id": user_id,
@@ -452,16 +555,21 @@ async def deepen_story(body: DeepenStoryRequest):
         insert_payload["voice_id"] = orig_voice_id
     try:
         r = supabase.table("Stories").insert(insert_payload).execute()
-        print(f"r: {r}")
     except Exception as e:
-        print(f"Failed to store deepening story Exception: {e}")
+        debug_log("stories.deepen", "insert_error", user_id=user_id, supabase=supabase, error=str(e))
         raise HTTPException(status_code=502, detail=f"Failed to store deepening story: {e!s}")
 
     rows = list(r.data or [])
-    print(f"rows: {rows}")
     created = rows[0] if rows else {}
     new_story_id = created.get("id")
-    print(f"new_story_id: {new_story_id}")
+    debug_log(
+        "stories.deepen",
+        "success",
+        user_id=user_id,
+        supabase=supabase,
+        new_story_id=new_story_id,
+        deepening_level=deepening_count,
+    )
     if new_story_id:
         try:
             safe_partial_update(
