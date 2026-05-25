@@ -225,7 +225,7 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
 
     r_today = (
         supabase.table("Stories")
-        .select("id, voice_id, playUrl, play_url")
+        .select("id, voice_id, playUrl")
         .eq("user_id", user_id)
         .gte("created_at", today_start)
         .lt("created_at", tomorrow_start)
