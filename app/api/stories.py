@@ -54,6 +54,25 @@ class DeepenStoryRequest(BaseModel):
         return self
 
 
+def _story_voice_id(row: dict) -> str:
+    return (row.get("voice_id") or row.get("voiceId") or "").strip()
+
+
+def _story_play_url(row: dict) -> str:
+    return (row.get("playUrl") or row.get("play_url") or "").strip()
+
+
+def _story_is_playable(row: dict) -> bool:
+    """A story counts toward the daily limit and is fully listenable when voice + audio URL exist."""
+    return bool(_story_voice_id(row)) and bool(_story_play_url(row))
+
+
+def _annotate_story_row(row: dict) -> dict:
+    out = dict(row)
+    out["audio_status"] = "ready" if _story_is_playable(out) else "pending_audio"
+    return out
+
+
 @router.get("")
 async def get_stories(user_id: str = Query(..., description="Filter stories by this user ID")):
     supabase = get_supabase()
@@ -62,11 +81,9 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be an integer")
 
-    # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories; only stories with voice_id set (not null, not empty string)
+    # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories.
     r = supabase.table("Stories").select("*").eq("user_id", uid).or_("is_deleted.eq.false,is_deleted.is.null").execute()
-    print(f"r: {r}")
     rows = list(r.data or [])
-    rows = [s for s in rows if (s.get("voice_id") or "").strip()]
     if not rows:
         return {"stories": []}
 
@@ -76,10 +93,13 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
         dr = supabase.table("Desires").select("id, desireCategory").in_("id", desire_ids).execute()
         name_by_id = {d["id"]: d.get("desireCategory") for d in (dr.data or [])}
 
+    annotated = []
     for row in rows:
-        row["desire_name"] = name_by_id.get(row.get("desire_id"))
+        item = _annotate_story_row(row)
+        item["desire_name"] = name_by_id.get(row.get("desire_id"))
+        annotated.append(item)
 
-    return {"stories": rows}
+    return {"stories": annotated}
 
 
 @router.delete("/{story_id}")
@@ -205,7 +225,7 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
 
     r_today = (
         supabase.table("Stories")
-        .select("id", count="exact")
+        .select("id, voice_id, playUrl, play_url")
         .eq("user_id", user_id)
         .gte("created_at", today_start)
         .lt("created_at", tomorrow_start)
@@ -213,12 +233,17 @@ def _enforce_daily_story_limit(supabase, user_id: int, request_timezone: str | N
         .execute()
     )
 
-    print(f"r_today: {r_today}")
-    count_today = getattr(r_today, "count", None)
-    if count_today is None:
-        count_today = len(r_today.data or []) if r_today.data is not None else 0
-    
-    if (count_today or 0) >= 1 and user_id != 242 and user_id != 237:
+    today_rows = list(r_today.data or [])
+    count_today = sum(1 for s in today_rows if _story_is_playable(s))
+    logging.info(
+        "[stories.limit] source=%s user_id=%s playable_today=%s rows_today=%s",
+        source,
+        user_id,
+        count_today,
+        len(today_rows),
+    )
+
+    if count_today >= 1 and user_id != 242 and user_id != 237:
         raise HTTPException(
             status_code=403,
             detail=(
