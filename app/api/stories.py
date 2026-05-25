@@ -64,6 +64,7 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
 
     # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories; only stories with voice_id set (not null, not empty string)
     r = supabase.table("Stories").select("*").eq("user_id", uid).or_("is_deleted.eq.false,is_deleted.is.null").execute()
+    print(f"r: {r}")
     rows = list(r.data or [])
     rows = [s for s in rows if (s.get("voice_id") or "").strip()]
     if not rows:
