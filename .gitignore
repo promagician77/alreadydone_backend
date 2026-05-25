@@ -4,6 +4,7 @@
 .env.*.local
 
 # Firebase service account (do not push to GitHub)
+secrets/
 app/firebase/
 **/firebase/*-firebase-adminsdk-*.json
 *.firebase-adminsdk*.json

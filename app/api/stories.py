@@ -334,47 +334,56 @@ async def deepen_story(body: DeepenStoryRequest):
 
     # Load story and verify ownership (include parent_story_id to resolve root)
     r_orig = supabase.table("Stories").select("id", "user_id", "theme", "story", "desire_id", "voice_id", "parent_story_id").eq("id", story_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
+    print(f"r_orig: {r_orig}")
     orig_rows = list(r_orig.data or [])
     if not orig_rows:
         raise HTTPException(status_code=404, detail="Story not found")
+    print(f"orig_rows: {orig_rows}")
     orig = orig_rows[0]
     story_user_id = orig.get("user_id") or orig.get("userId")
     if story_user_id != user_id:
         raise HTTPException(status_code=403, detail="Story does not belong to this user")
-
+    print(f"orig: {orig}")
     desire_id = orig.get("desire_id")
     if desire_id is None:
         raise HTTPException(status_code=400, detail="Original story has no desire_id")
-
+    print(f"desire_id: {desire_id}")
     # Resolve root story (Option A: always use root for theme and counting so numbering is #1, #2, #3)
     root = orig
     while root.get("parent_story_id") is not None:
+        print(f"root: {root}")
         parent_id = root.get("parent_story_id") or root.get("parent_story_Id")
         r_parent = supabase.table("Stories").select("id", "theme", "story", "voice_id", "parent_story_id").eq("id", parent_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
+        print(f"r_parent: {r_parent}")
         parent_rows = list(r_parent.data or [])
         if not parent_rows:
             break
+        print(f"parent_rows: {parent_rows}")
         root = parent_rows[0]
     root_id = root.get("id") or root.get("Id")
     original_theme = (root.get("theme") or "").strip() or "Manifestation"
     root_story_text = (root.get("story") or "").strip()
-
+    print(f"root_id: {root_id}")
+    print(f"original_theme: {original_theme}")
+    print(f"root_story_text: {root_story_text}")
     # Get desire category for prompt
     dr = supabase.table("Desires").select("desireCategory").eq("id", desire_id).execute()
     desire_rows = list(dr.data or [])
     original_desire_category = desire_rows[0].get("desireCategory", "Life") if desire_rows else "Life"
+    print(f"original_desire_category: {original_desire_category}")
     # Existing deepenings under the root (so count is 1, 2, 3...)
     r_deepen = supabase.table("Stories").select("id", "story", "deepening_level").eq("parent_story_id", root_id).or_("is_deleted.eq.false,is_deleted.is.null").execute()
     deepen_rows = list(r_deepen.data or [])
+    print(f"deepen_rows: {deepen_rows}")
     def _level(row):
         v = row.get("deepening_level") or row.get("deepeningLevel") or 0
         return int(v) if v is not None else 0
     deepen_rows.sort(key=_level)
     previous_story_text = (deepen_rows[-1].get("story") or "").strip() if deepen_rows else root_story_text
     deepening_count = len(deepen_rows) + 1
-
+    print(f"deepening_count: {deepening_count}")
     _enforce_daily_story_limit(supabase, user_id, body.timezone, source="deepen")
-
+    print(f"body.timezone: {body.timezone}")
     try:
         theme, story, generation_meta = await generate_deepen_story(
             user_name=body.name,
@@ -386,14 +395,18 @@ async def deepen_story(body: DeepenStoryRequest):
             previous_story_text=previous_story_text or "(No previous story)",
             deepening_count=deepening_count,
         )
+        print(f"generate_deepen_story result: {theme, story, generation_meta}")
     except ValueError as e:
+        print(f"generate_deepen_story ValueError: {e}")
         if "ANTHROPIC_API_KEY" in str(e):
             raise HTTPException(status_code=503, detail="Story generation is not configured")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        print(f"generate_deepen_story Exception: {e}")
         raise HTTPException(status_code=502, detail=f"Deepen story generation failed: {e!s}")
 
     orig_voice_id = (root.get("voice_id") or root.get("voiceId") or "").strip()
+    print(f"orig_voice_id: {orig_voice_id}")
     insert_payload = {
         "theme": theme,
         "user_id": user_id,
@@ -406,12 +419,16 @@ async def deepen_story(body: DeepenStoryRequest):
         insert_payload["voice_id"] = orig_voice_id
     try:
         r = supabase.table("Stories").insert(insert_payload).execute()
+        print(f"r: {r}")
     except Exception as e:
+        print(f"Failed to store deepening story Exception: {e}")
         raise HTTPException(status_code=502, detail=f"Failed to store deepening story: {e!s}")
 
     rows = list(r.data or [])
+    print(f"rows: {rows}")
     created = rows[0] if rows else {}
     new_story_id = created.get("id")
+    print(f"new_story_id: {new_story_id}")
     if new_story_id:
         try:
             safe_partial_update(
