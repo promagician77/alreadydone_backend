@@ -17,13 +17,13 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-MONDAY_HOUR = 8
-MONDAY_MINUTE = 0
+MONDAY_HOUR = 11
+MONDAY_MINUTE = 45
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
-Thursday_HOUR = 8
-Thursday_MINUTE = 0
+Thursday_HOUR = 11
+Thursday_MINUTE = 47
 Thursday_TITLE = "Your Stories Are Waiting"
 Thursday_BODY = "Tap to hear them in your voice."
 
