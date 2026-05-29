@@ -29,10 +29,10 @@ Thursday_BODY = "Tap to hear them in your voice."
 
 _STORY_REMINDER_TEST_USER_ID = 237
 _TEST_OVERRIDE_WEEKDAY = 4  # Wednesday (Mon=0)
-_TEST_MONDAY_HOUR = 11
+_TEST_MONDAY_HOUR = 12
 _TEST_MONDAY_MINUTE = 55
 _TEST_Thursday_HOUR = 12
-_TEST_Thursday_MINUTE = 0
+_TEST_Thursday_MINUTE = 57
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
