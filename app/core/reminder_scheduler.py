@@ -28,11 +28,11 @@ Thursday_TITLE = "Your Stories Are Waiting"
 Thursday_BODY = "Tap to hear them in your voice."
 
 _STORY_REMINDER_TEST_USER_ID = 237
-_TEST_OVERRIDE_WEEKDAY = 2  # Wednesday (Mon=0)
-_TEST_MONDAY_HOUR = 15
-_TEST_MONDAY_MINUTE = 55
-_TEST_Thursday_HOUR = 16
-_TEST_Thursday_MINUTE = 0
+_TEST_OVERRIDE_WEEKDAY = 4  # Wednesday (Mon=0)
+_TEST_MONDAY_HOUR = 20
+_TEST_MONDAY_MINUTE = 5
+_TEST_Thursday_HOUR = 20
+_TEST_Thursday_MINUTE = 10
 
 
 def _parse_hour_minute(value) -> tuple[int, int] | None:
