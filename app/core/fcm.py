@@ -186,7 +186,7 @@ def send_push(
             )
             print(
                 f"[fcm/{reminder_type}] apns aps.category={apns_category!r} "
-                f"(notification + data payload for foreground + lock screen)",
+                f"(notification + data + apns category)",
                 flush=True,
             )
             android_config = messaging.AndroidConfig(
@@ -198,9 +198,6 @@ def send_push(
                     channel_id="fcm_default_channel",
                 ),
             )
-            # Top-level notification is required for iOS foreground display
-            # (setForegroundNotificationPresentationOptions). Data-only + APNS alert
-            # shows on lock screen / background but not while the app is open.
             message = messaging.Message(
                 notification=messaging.Notification(title=title, body=body),
                 data=data,
