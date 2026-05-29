@@ -17,13 +17,13 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
-MONDAY_HOUR = 8
-MONDAY_MINUTE = 0
+MONDAY_HOUR = 10
+MONDAY_MINUTE = 27
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
-Thursday_HOUR = 8
-Thursday_MINUTE = 0
+Thursday_HOUR = 10
+Thursday_MINUTE = 29
 Thursday_TITLE = "Your Stories Are Waiting"
 Thursday_BODY = "Tap to hear them in your voice."
 
@@ -67,7 +67,7 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 
 
 def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
-    matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
+    matches = weekday == 4 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         matches = matches or (
             weekday == _TEST_OVERRIDE_WEEKDAY
@@ -86,7 +86,7 @@ def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int)
 
 
 def _is_thursday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
-    matches = weekday == 3 and (hour, minute) == (Thursday_HOUR, Thursday_MINUTE)
+    matches = weekday == 4 and (hour, minute) == (Thursday_HOUR, Thursday_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         matches = matches or (
             weekday == _TEST_OVERRIDE_WEEKDAY
