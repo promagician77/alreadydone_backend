@@ -28,7 +28,7 @@ Thursday_TITLE = "Your Stories Are Waiting"
 Thursday_BODY = "Tap to hear them in your voice."
 
 _STORY_REMINDER_TEST_USER_ID = 237
-_TEST_OVERRIDE_WEEKDAY = 4  # Wednesday (Mon=0)
+_TEST_OVERRIDE_WEEKDAY = 4  # Friday (Mon=0)
 _TEST_MONDAY_HOUR = 13
 _TEST_MONDAY_MINUTE = 0
 _TEST_Thursday_HOUR = 13
@@ -68,19 +68,16 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 
 def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
     matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
-    if user_id == 1014:
-        print(f"[reminders/monday] time check user_id={user_id} local={hour:02d}:{minute:02d} weekday={weekday} target=Mon {MONDAY_HOUR:02d}:{MONDAY_MINUTE:02d} matches={matches}")
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         matches = matches or (
             weekday == _TEST_OVERRIDE_WEEKDAY
             and (hour, minute) == (_TEST_MONDAY_HOUR, _TEST_MONDAY_MINUTE)
         )
-    if user_id == 237:
         print(
             f"[reminders/monday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
             f"target=Mon {MONDAY_HOUR:02d}:{MONDAY_MINUTE:02d} "
-            f"or Wed {_TEST_MONDAY_HOUR:02d}:{_TEST_MONDAY_MINUTE:02d} "
+            f"or Fri {_TEST_MONDAY_HOUR:02d}:{_TEST_MONDAY_MINUTE:02d} "
             f"(test user only) matches={matches}",
             flush=True,
         )
@@ -94,12 +91,11 @@ def _is_thursday_reminder_time(hour: int, minute: int, weekday: int, user_id: in
             weekday == _TEST_OVERRIDE_WEEKDAY
             and (hour, minute) == (_TEST_Thursday_HOUR, _TEST_Thursday_MINUTE)
         )
-    if user_id == _STORY_REMINDER_TEST_USER_ID:
         print(
-            f"[reminders/Thursday] time check user_id={user_id} "
+            f"[reminders/thursday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
             f"target=Thu {Thursday_HOUR:02d}:{Thursday_MINUTE:02d} "
-            f"or Wed {_TEST_Thursday_HOUR:02d}:{_TEST_Thursday_MINUTE:02d} "
+            f"or Fri {_TEST_Thursday_HOUR:02d}:{_TEST_Thursday_MINUTE:02d} "
             f"(test user only) matches={matches}",
             flush=True,
         )
@@ -114,7 +110,6 @@ def _maybe_send_story_reminder(
     reminder_type: str,
     title: str,
     body: str,
-    apns_category: str,
     local_hour: int,
     local_minute: int,
     timezone_name: str | None,
@@ -125,26 +120,22 @@ def _maybe_send_story_reminder(
         print(
             f"[reminders/{reminder_type}] sending user_id={user_id} "
             f"local={local_hour:02d}:{local_minute:02d} tz={timezone_name!r} "
-            f"title={title!r} apns_category={apns_category}",
+            f"title={title!r}",
             flush=True,
         )
-        if send_push(token, title, body, reminder_type=reminder_type, user_id=user_id):
+    if send_push(token, title, body, reminder_type=reminder_type, user_id=user_id):
+        if user_id == _STORY_REMINDER_TEST_USER_ID:
             print(
                 f"[reminders/{reminder_type}] send_push returned ok user_id={user_id}",
                 flush=True,
             )
-        else:
+    else:
+        if user_id == _STORY_REMINDER_TEST_USER_ID:
             print(
                 f"[reminders/{reminder_type}] send_push FAILED user_id={user_id} — "
                 f"see [fcm/{reminder_type}] prints above",
                 flush=True,
             )
-    else:
-        print(
-            f"[reminders/{reminder_type}] due at {local_hour:02d}:{local_minute:02d} "
-            f"but skipped (test gate) user_id={user_id}",
-            flush=True,
-        )
 
 
 def _check_and_send_reminders():
@@ -222,7 +213,6 @@ def _check_and_send_reminders():
             reminder_type="monday",
             title=MONDAY_TITLE,
             body=MONDAY_BODY,
-            apns_category="MONDAY_STORY",
             local_hour=current_hour,
             local_minute=current_minute,
             timezone_name=timezone_name,
@@ -236,7 +226,6 @@ def _check_and_send_reminders():
             reminder_type="thursday",
             title=Thursday_TITLE,
             body=Thursday_BODY,
-            apns_category="Thursday_STORY",
             local_hour=current_hour,
             local_minute=current_minute,
             timezone_name=timezone_name,

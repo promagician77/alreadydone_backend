@@ -62,3 +62,7 @@ sudo systemctl restart alreadyapp-backend
 ```
 
 The API will listen on `http://0.0.0.0:8000`. Put a reverse proxy (e.g. nginx) in front for HTTPS and a public domain.
+
+## 5. Daily unsubscribed users report
+
+This is a **separate service** in the sibling repo folder `alreadydone_report_service/`. See its [README](../../alreadydone_report_service/README.md) for setup, SendGrid env vars, and systemd timer install.
