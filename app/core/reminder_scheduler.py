@@ -67,7 +67,7 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 
 
 def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
-    matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
+    matches = weekday == 1 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
         print(
             f"[reminders/monday] time check user_id={user_id} "
