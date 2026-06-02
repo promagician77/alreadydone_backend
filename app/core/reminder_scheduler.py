@@ -117,6 +117,7 @@ def _maybe_send_story_reminder(
     title: str,
     body: str,
     local_hour: int,
+    apns_category: str,
     local_minute: int,
     timezone_name: str | None,
 ) -> None:
