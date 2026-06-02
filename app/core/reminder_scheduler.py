@@ -18,7 +18,7 @@ BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
 MONDAY_HOUR = 21
-MONDAY_MINUTE = 5
+MONDAY_MINUTE = 10
 MONDAY_TITLE = "Create Your Story Now"
 MONDAY_BODY = "Then hear it in your voice all day."
 
@@ -27,7 +27,7 @@ Thursday_MINUTE = 0
 Thursday_TITLE = "Your Stories Are Waiting"
 Thursday_BODY = "Tap to hear them in your voice."
 
-_STORY_REMINDER_TEST_USER_ID = 237
+_STORY_REMINDER_TEST_USER_ID = 1014
 _TEST_OVERRIDE_WEEKDAY = 4  # Friday (Mon=0)
 _TEST_MONDAY_HOUR = 13
 _TEST_MONDAY_MINUTE = 0
@@ -69,10 +69,6 @@ def _get_user_now(utc_now: datetime, user_timezone: str | None) -> tuple[int, in
 def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int) -> bool:
     matches = weekday == 0 and (hour, minute) == (MONDAY_HOUR, MONDAY_MINUTE)
     if user_id == _STORY_REMINDER_TEST_USER_ID:
-        matches = matches or (
-            weekday == _TEST_OVERRIDE_WEEKDAY
-            and (hour, minute) == (_TEST_MONDAY_HOUR, _TEST_MONDAY_MINUTE)
-        )
         print(
             f"[reminders/monday] time check user_id={user_id} "
             f"local={hour:02d}:{minute:02d} weekday={weekday} "
@@ -80,6 +76,10 @@ def _is_monday_reminder_time(hour: int, minute: int, weekday: int, user_id: int)
             f"or Fri {_TEST_MONDAY_HOUR:02d}:{_TEST_MONDAY_MINUTE:02d} "
             f"(test user only) matches={matches}",
             flush=True,
+        )
+        matches = matches or (
+            weekday == _TEST_OVERRIDE_WEEKDAY
+            and (hour, minute) == (_TEST_MONDAY_HOUR, _TEST_MONDAY_MINUTE)
         )
     return matches
 
