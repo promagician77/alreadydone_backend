@@ -35,8 +35,11 @@ def _get_app_user_id_from_payload(body: dict) -> str | None:
     return body.get("app_user_id")
 
 
-def _rc_status_from_event(event_type: str) -> str:
+def _rc_status_from_event(event_type: str, period_type: str = "") -> str:
     if event_type in RC_ACTIVE_TYPES:
+        # INITIAL_PURCHASE with period_type=TRIAL means a free trial has started, not a paid sub.
+        if event_type == "INITIAL_PURCHASE" and period_type == "TRIAL":
+            return "trial"
         return "active"
     if event_type in RC_INACTIVE_TYPES:
         return "expired"
@@ -96,7 +99,8 @@ async def revenuecat_webhook(
         app_user_id=app_user_id,
     )
 
-    rc_status = _rc_status_from_event(event_type)
+    period_type = (body.get("period_type") or "").upper()
+    rc_status = _rc_status_from_event(event_type, period_type=period_type)
     product_id = body.get("product_id") or body.get("new_product_id") or ""
     if isinstance(product_id, list):
         product_id = product_id[0] if product_id else ""
