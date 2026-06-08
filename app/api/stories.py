@@ -8,9 +8,10 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.claude import generate_story, generate_deepen_story
-from app.core.config import CATEGORIES, ENERGY_WORDS
+from app.core.config import CATEGORIES, ENERGY_WORDS, settings
 from app.core.db_utils import safe_partial_update
 from app.core.debug_user import debug_log
+from app.core.mobile_app_release import resolve_mobile_latest
 from app.core.supabase_client import get_supabase
 
 router = APIRouter(prefix="/stories", tags=["stories"])
@@ -72,8 +73,28 @@ def _annotate_story_row(row: dict) -> dict:
     return out
 
 
+def _check_app_version(app_build: int | None, app_version: str | None) -> dict | None:
+    resolved = resolve_mobile_latest(settings)
+    if resolved is None:
+        return None
+    needs_update = False
+    if app_build is not None and resolved.latest_build > 0:
+        needs_update = app_build < resolved.latest_build
+    return {
+        "needs_update": needs_update,
+        "latest_build": resolved.latest_build,
+        "latest_version": resolved.latest_version,
+        "client_build": app_build,
+        "client_version": app_version,
+    }
+
+
 @router.get("")
-async def get_stories(user_id: str = Query(..., description="Filter stories by this user ID")):
+async def get_stories(
+    user_id: str = Query(..., description="Filter stories by this user ID"),
+    app_build: int | None = Query(None, description="Client app build number for version check"),
+    app_version: str | None = Query(None, description="Client app version string for version check"),
+):
     supabase = get_supabase()
     debug_log("stories.get", "start", user_id=user_id, supabase=supabase)
     try:
@@ -81,12 +102,15 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be an integer")
 
+    version_check = _check_app_version(app_build, app_version)
+    print(f"version_check: {version_check}")
+
     # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories with voice_id set.
     r = supabase.table("Stories").select("*").eq("user_id", uid).or_("is_deleted.eq.false,is_deleted.is.null").execute()
     rows = list(r.data or [])
     rows = [s for s in rows if _story_voice_id(s)]
     if not rows:
-        return {"stories": []}
+        return {"stories": [], "version_check": version_check}
 
     desire_ids = list({s["desire_id"] for s in rows if s.get("desire_id") is not None})
     name_by_id = {}
@@ -107,7 +131,7 @@ async def get_stories(user_id: str = Query(..., description="Filter stories by t
         supabase=supabase,
         story_count=len(annotated),
     )
-    return {"stories": annotated}
+    return {"stories": annotated, "version_check": version_check}
 
 
 @router.delete("/{story_id}")
