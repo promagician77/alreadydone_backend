@@ -132,6 +132,7 @@ async def get_stories(
         raise HTTPException(status_code=400, detail="user_id must be an integer")
 
     if app_build is None and app_version is None:
+        print(f"[force_update] no app_build or app_version, adding background task user_id={user_id}", flush=True)
         background_tasks.add_task(_send_force_update_notification, supabase, uid)
 
     version_check = _check_app_version(app_build, app_version)
