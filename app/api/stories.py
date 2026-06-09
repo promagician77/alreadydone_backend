@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.claude import generate_story, generate_deepen_story
@@ -73,6 +73,28 @@ def _annotate_story_row(row: dict) -> dict:
     return out
 
 
+def _send_force_update_notification(supabase, user_id: int) -> None:
+    """Look up the user's FCM token and send a force-update push notification."""
+    from app.core.fcm import send_push
+    try:
+        r = supabase.table("Users").select("fcm_token").eq("id", user_id).limit(1).execute()
+        rows = list(r.data or [])
+        if not rows:
+            return
+        token = (rows[0].get("fcm_token") or "").strip()
+        if not token:
+            return
+        send_push(
+            token=token,
+            title="Update Required",
+            body="Please update Already Done to the latest version to keep all features working.",
+            reminder_type="force_update",
+            user_id=user_id,
+        )
+    except Exception as e:
+        logging.warning("[stories.get] force_update notification failed user_id=%s: %s", user_id, e)
+
+
 def _check_app_version(app_build: int | None, app_version: str | None) -> dict | None:
     resolved = resolve_mobile_latest(settings)
     if resolved is None:
@@ -91,6 +113,7 @@ def _check_app_version(app_build: int | None, app_version: str | None) -> dict |
 
 @router.get("")
 async def get_stories(
+    background_tasks: BackgroundTasks,
     user_id: str = Query(..., description="Filter stories by this user ID"),
     app_build: int | None = Query(None, description="Client app build number for version check"),
     app_version: str | None = Query(None, description="Client app version string for version check"),
@@ -101,6 +124,9 @@ async def get_stories(
         uid = int(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be an integer")
+
+    if app_build is None and app_version is None:
+        background_tasks.add_task(_send_force_update_notification, supabase, uid)
 
     version_check = _check_app_version(app_build, app_version)
     print(f"version_check: {version_check}")
