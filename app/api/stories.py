@@ -97,6 +97,7 @@ def _send_force_update_notification(supabase, user_id: int) -> None:
             extra["ios_store_url"] = ios_url
         if android_url:
             extra["android_store_url"] = android_url
+        print(f"[force_update] extra_data={extra} ios_url={ios_url!r} android_url={android_url!r}", flush=True)
         send_push(
             token=token,
             title="Update Required",
