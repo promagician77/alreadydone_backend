@@ -73,8 +73,14 @@ def _annotate_story_row(row: dict) -> dict:
     return out
 
 
+def _force_update_body() -> str:
+    ios_url = (settings.MOBILE_IOS_STORE_URL or "").strip()
+    if ios_url:
+        return f"Your app is out of date. Update now: {ios_url}"
+    return "Your app is out of date. Go to the App Store and update Already Done now."
+
+
 def _send_force_update_notification(supabase, user_id: int) -> None:
-    """Look up the user's FCM token and send a force-update push notification."""
     from app.core.fcm import send_push
     try:
         r = supabase.table("Users").select("fcm_token").eq("id", user_id).limit(1).execute()
@@ -87,7 +93,7 @@ def _send_force_update_notification(supabase, user_id: int) -> None:
         send_push(
             token=token,
             title="Update Required",
-            body="Please update Already Done to the latest version to keep all features working.",
+            body=_force_update_body(),
             reminder_type="force_update",
             user_id=user_id,
         )
