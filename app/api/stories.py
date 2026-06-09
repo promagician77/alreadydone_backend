@@ -1,8 +1,12 @@
 """Stories endpoint: list stories for a user; generate story theme and story via Claude."""
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+_FORCE_UPDATE_INTERVAL_SECONDS = 5 * 3600  # 5 hours
+_force_update_last_sent: dict[int, float] = {}
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
@@ -110,15 +114,41 @@ def _send_force_update_notification(supabase, user_id: int) -> None:
         logging.warning("[stories.get] force_update notification failed user_id=%s: %s", user_id, e)
 
 
+def _parse_version(v: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(x) for x in v.strip().split("."))
+    except (ValueError, AttributeError):
+        return (0,)
+
+
+def _needs_update(
+    app_build: int | None,
+    app_version: str | None,
+    resolved: "ResolvedMobileLatest",
+) -> bool:
+    if app_build is None and app_version is None:
+        return resolved.latest_build > 0
+
+    if app_version and resolved.latest_version:
+        client_v = _parse_version(app_version)
+        latest_v = _parse_version(resolved.latest_version)
+        if client_v > latest_v:
+            return False
+        if client_v < latest_v:
+            return True
+
+    if app_build is not None and resolved.latest_build > 0:
+        return app_build < resolved.latest_build
+
+    return False
+
+
 def _check_app_version(app_build: int | None, app_version: str | None) -> dict | None:
     resolved = resolve_mobile_latest(settings)
     if resolved is None:
         return None
-    needs_update = False
-    if app_build is not None and resolved.latest_build > 0:
-        needs_update = app_build < resolved.latest_build
     return {
-        "needs_update": needs_update,
+        "needs_update": _needs_update(app_build, app_version, resolved),
         "latest_build": resolved.latest_build,
         "latest_version": resolved.latest_version,
         "client_build": app_build,
