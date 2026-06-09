@@ -206,6 +206,26 @@ def send_push(
                 android=android_config,
             )
         else:
+            apns_config = messaging.APNSConfig(
+                headers={
+                    "apns-push-type": "alert",
+                    "apns-priority": "10",
+                },
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        alert=messaging.ApsAlert(title=title, body=body),
+                        sound="default",
+                    ),
+                ),
+            )
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    title=title,
+                    body=body,
+                    channel_id="fcm_default_channel",
+                ),
+            )
             message = messaging.Message(
                 notification=messaging.Notification(title=title, body=body),
                 data=data,
