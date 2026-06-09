@@ -90,12 +90,20 @@ def _send_force_update_notification(supabase, user_id: int) -> None:
         token = (rows[0].get("fcm_token") or "").strip()
         if not token:
             return
+        extra: dict[str, str] = {}
+        ios_url = (settings.MOBILE_IOS_STORE_URL or "").strip()
+        android_url = (settings.MOBILE_ANDROID_PLAY_STORE_URL or "").strip()
+        if ios_url:
+            extra["ios_store_url"] = ios_url
+        if android_url:
+            extra["android_store_url"] = android_url
         send_push(
             token=token,
             title="Update Required",
             body=_force_update_body(),
             reminder_type="force_update",
             user_id=user_id,
+            extra_data=extra or None,
         )
     except Exception as e:
         logging.warning("[stories.get] force_update notification failed user_id=%s: %s", user_id, e)
@@ -131,11 +139,14 @@ async def get_stories(
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be an integer")
 
-    if app_build is None and app_version is None:
-        print(f"[force_update] no app_build or app_version, adding background task user_id={user_id}", flush=True)
-        background_tasks.add_task(_send_force_update_notification, supabase, uid)
-
     version_check = _check_app_version(app_build, app_version)
+
+    needs_force_update = (app_build is None and app_version is None) or (
+        version_check is not None and version_check["needs_update"]
+    )
+    if needs_force_update:
+        print(f"[force_update] triggering notification user_id={user_id} app_build={app_build} needs_update={version_check and version_check['needs_update']}", flush=True)
+        background_tasks.add_task(_send_force_update_notification, supabase, uid)
     print(f"version_check: {version_check}")
 
     # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories with voice_id set.

@@ -121,6 +121,7 @@ def send_push(
     body: str,
     reminder_type: str | None = None,
     user_id: int | None = None,
+    extra_data: dict[str, str] | None = None,
 ) -> bool:
     user_label = f"user_id={user_id}" if user_id is not None else "user_id=?"
     if not token or not token.strip():
@@ -158,6 +159,8 @@ def send_push(
         data: dict[str, str] = {}
         if reminder_type:
             data["type"] = reminder_type
+        if extra_data:
+            data.update(extra_data)
         apns_config = None
         android_config = None
 
