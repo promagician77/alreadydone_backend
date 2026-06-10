@@ -209,13 +209,9 @@ def send_push(
                 android=android_config,
             )
         elif reminder_type == "force_update":
-            # 1. Extract the store URLs safely from extra_data
             ios_store_url = (extra_data or {}).get("ios_store_url", "").strip()
             android_store_url = (extra_data or {}).get("android_store_url", "").strip()
 
-            # 2. Configure iOS APNS 
-            # Passing the store URL into the 'category' argument forces the native iOS layout
-            # to capture the tap action as a deep-link routing straight to the App Store.
             apns_config = messaging.APNSConfig(
                 headers={
                     "apns-push-type": "alert",
@@ -225,61 +221,19 @@ def send_push(
                     aps=messaging.Aps(
                         alert=messaging.ApsAlert(title=title, body=body),
                         sound="default",
-                        category=ios_store_url if ios_store_url else None  # FIXED
                     ),
                 )
             )
 
-            # 3. Configure Android 
-            # Putting a web store URL inside click_action overrides internal Flutter handlers 
-            # and redirects the device directly into the native Google Play Store application.
-            android_config = messaging.AndroidConfig(
-                priority="high",
-                notification=messaging.AndroidNotification(
-                    title=title,
-                    body=body,
-                    click_action=android_store_url if android_store_url else None, # FIXED
-                    channel_id="fcm_default_channel",
-                ),
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body, image=None),
+                data=data,
+                token=token.strip(),
+                apns=apns_config
             )
 
-            # 4. Compile the final clean message packet
-            # Removed the problematic and unsupported 'fcm_options(link=...)' parameter.
-            message = messaging.Message(
-                notification=messaging.Notification(title=title, body=body),
-                data=data,
-                token=token.strip(),
-                apns=apns_config,
-                android=android_config,
-            )
-        else:
-            apns_config = messaging.APNSConfig(
-                headers={
-                    "apns-push-type": "alert",
-                    "apns-priority": "10",
-                },
-                payload=messaging.APNSPayload(
-                    aps=messaging.Aps(
-                        alert=messaging.ApsAlert(title=title, body=body),
-                        sound="default",
-                    ),
-                ),
-            )
-            android_config = messaging.AndroidConfig(
-                priority="high",
-                notification=messaging.AndroidNotification(
-                    title=title,
-                    body=body,
-                    channel_id="fcm_default_channel",
-                ),
-            )
-            message = messaging.Message(
-                notification=messaging.Notification(title=title, body=body),
-                data=data,
-                token=token.strip(),
-                apns=apns_config,
-                android=android_config,
-            )
+            if ios_store_url:
+                message.notification.link = ios_store_url
         
         message_id = messaging.send(message)
         if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
