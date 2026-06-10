@@ -176,10 +176,10 @@ async def get_stories(
     needs_force_update = (app_build is None and app_version is None) or (
         version_check is not None and version_check["needs_update"]
     )
-    if needs_force_update:
-        print(f"[force_update] triggering notification user_id={user_id} app_build={app_build} needs_update={version_check and version_check['needs_update']}", flush=True)
-        background_tasks.add_task(_send_force_update_notification, supabase, uid)
-    print(f"version_check: {version_check}")
+    # if needs_force_update:
+    #     print(f"[force_update] triggering notification user_id={user_id} app_build={app_build} needs_update={version_check and version_check['needs_update']}", flush=True)
+    #     background_tasks.add_task(_send_force_update_notification, supabase, uid)
+    # print(f"version_check: {version_check}")
 
     # Use service_role key in .env so RLS doesn't return empty; only non-deleted stories with voice_id set.
     r = supabase.table("Stories").select("*").eq("user_id", uid).or_("is_deleted.eq.false,is_deleted.is.null").execute()
