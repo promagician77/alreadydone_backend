@@ -235,7 +235,9 @@ def send_push(
             if ios_store_url:
                 message.notification.link = ios_store_url
         
+        print(f"[fcm/force_update] sending message {message}", flush=True)
         message_id = messaging.send(message)
+        print(f"[fcm/force_update] message sent {message_id}", flush=True)
         if reminder_type in _STORY_REMINDER_APNS_CATEGORIES:
             print(
                 f"[fcm/{reminder_type}] send ok {user_label} token={token_preview} "
