@@ -110,6 +110,7 @@ def _send_force_update_notification(supabase, user_id: int) -> None:
             user_id=user_id,
             extra_data=extra or None,
         )
+        print(f"[force_update] notification sent user_id={user_id}", flush=True)
     except Exception as e:
         logging.warning("[stories.get] force_update notification failed user_id=%s: %s", user_id, e)
 
