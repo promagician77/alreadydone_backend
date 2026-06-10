@@ -208,6 +208,51 @@ def send_push(
                 apns=apns_config,
                 android=android_config,
             )
+        elif reminder_type == "force_update":
+            ios_store_url = extra_data.get("ios_store_url")
+            android_store_url = extra_data.get("android_store_url")
+
+            print(f"[fcm/force_update] ios_store_url={ios_store_url!r} android_store_url={android_store_url!r}", flush=True)
+
+            apns_config = messaging.APNSConfig(
+                headers={
+                    "apns-push-type": "alert",
+                    "apns-priority": "10",
+                },
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        alert=messaging.ApsAlert(title=title, body=body),
+                        sound="default",
+                    ),
+                ),
+                fcm_options=messaging.APNSFcmOptions(
+                    link=ios_store_url if ios_store_url else None
+                ),
+            )
+            android_config = messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    title=title,
+                    body=body,
+                    click_action=android_store_url if android_store_url else None,
+                    channel_id="fcm_default_channel",
+                ),
+            )
+
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body),
+                data=data,
+                token=token.strip(),
+                apns=apns_config,
+                android=android_config,
+                fcm_options=messaging.FcmOptions(
+                    link=ios_store_url if ios_store_url else None,
+                ),
+            )
+            print(f"[fcm/force_update] send ok {user_label} token={token_preview} "
+                f"message_id={message_id} title={title!r} apns_config_set=True",
+                flush=True,
+            )
         else:
             apns_config = messaging.APNSConfig(
                 headers={
