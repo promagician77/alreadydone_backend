@@ -225,7 +225,7 @@ def send_push(
                         sound="default",
                     ),
                 ),
-                fcm_options=messaging.APNSFcmOptions(
+                fcm_options=messaging.APNSFCMOptions(
                     link=ios_store_url if ios_store_url else None
                 ),
             )
@@ -245,13 +245,13 @@ def send_push(
                 token=token.strip(),
                 apns=apns_config,
                 android=android_config,
-                fcm_options=messaging.FcmOptions(
+                fcm_options=messaging.FCMOptions(
                     link=ios_store_url if ios_store_url else None,
                 ),
             )
             print(f"[fcm/force_update] send ok {user_label} token={token_preview} "
                 f"message_id={message_id} title={title!r} apns_config_set=True",
-                flush=True,
+                flush=True, 
             )
         else:
             apns_config = messaging.APNSConfig(
