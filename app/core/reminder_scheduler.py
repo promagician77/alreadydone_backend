@@ -17,6 +17,8 @@ MORNING_BODY = "Start your day with a fresh story made just for you."
 BEDTIME_TITLE = "Wind Down with a Story 🌙"
 BEDTIME_BODY = "Your bedtime story is ready to help you relax."
 
+ENABLE_STORY_REMINDERS = False
+
 MONDAY_HOUR = 8
 MONDAY_MINUTE = 0
 MONDAY_TITLE = "Create Your Story Now"
@@ -212,34 +214,35 @@ def _check_and_send_reminders():
                 logger.info("[reminders] sent bedtime user_id=%s", user_id)
             else:
                 logger.warning("[reminders] bedtime send failed user_id=%s", user_id)
-        _maybe_send_story_reminder(
-            token=token,
-            user_id=user_id,
-            due=_is_monday_reminder_time(
-                current_hour, current_minute, current_weekday, user_id
-            ),
-            reminder_type="monday",
-            title=MONDAY_TITLE,
-            body=MONDAY_BODY,
-            local_hour=current_hour,
-            apns_category="MONDAY_STORY",
-            local_minute=current_minute,
-            timezone_name=timezone_name,
-        )
-        _maybe_send_story_reminder(
-            token=token,
-            user_id=user_id,
-            due=_is_thursday_reminder_time(
-                current_hour, current_minute, current_weekday, user_id
-            ),
-            reminder_type="thursday",
-            title=Thursday_TITLE,
-            body=Thursday_BODY,
-            apns_category="Thursday_STORY",
-            local_hour=current_hour,
-            local_minute=current_minute,
-            timezone_name=timezone_name,
-        )
+        if ENABLE_STORY_REMINDERS:
+            _maybe_send_story_reminder(
+                token=token,
+                user_id=user_id,
+                due=_is_monday_reminder_time(
+                    current_hour, current_minute, current_weekday, user_id
+                ),
+                reminder_type="monday",
+                title=MONDAY_TITLE,
+                body=MONDAY_BODY,
+                local_hour=current_hour,
+                apns_category="MONDAY_STORY",
+                local_minute=current_minute,
+                timezone_name=timezone_name,
+            )
+            _maybe_send_story_reminder(
+                token=token,
+                user_id=user_id,
+                due=_is_thursday_reminder_time(
+                    current_hour, current_minute, current_weekday, user_id
+                ),
+                reminder_type="thursday",
+                title=Thursday_TITLE,
+                body=Thursday_BODY,
+                apns_category="Thursday_STORY",
+                local_hour=current_hour,
+                local_minute=current_minute,
+                timezone_name=timezone_name,
+            )
 
 
 def start_reminder_scheduler():
@@ -247,11 +250,16 @@ def start_reminder_scheduler():
         probe_fcm_at_startup()
         scheduler.add_job(_check_and_send_reminders, "cron", minute="*", id="reminders")
         scheduler.start()
-        logger.info(
-            "[reminders] scheduler started (every minute, Mon/Thu story reminders at %02d:%02d local)",
-            MONDAY_HOUR,
-            MONDAY_MINUTE,
-        )
+        if ENABLE_STORY_REMINDERS:
+            logger.info(
+                "[reminders] scheduler started (every minute, Mon/Thu story reminders at %02d:%02d local)",
+                MONDAY_HOUR,
+                MONDAY_MINUTE,
+            )
+        else:
+            logger.info(
+                "[reminders] scheduler started (every minute, morning/bedtime only; story reminders disabled)"
+            )
 
 
 def stop_reminder_scheduler():
