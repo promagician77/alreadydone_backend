@@ -665,7 +665,7 @@ async def generate_and_store_story_audio(
                     "request_id": result.request_id,
                     "history_item_id": result.history_item_id,
                     "chars": len(paragraph),
-                    "ssml_chars": len(ssml_chunk),
+                    "ssml_chars": len(tts_chunk),
                     "response_bytes": len(result.audio_bytes),
                     "latency_ms": latency_ms,
                     "duration_seconds": round(duration, 3) if duration is not None else None,
