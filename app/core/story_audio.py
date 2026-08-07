@@ -175,7 +175,6 @@ def _format_text_for_tts(text: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
 
     # Prevent TTS from treating common title abbreviations as sentence breaks.
-    # This also avoids SSML break insertion after these periods later.
     s = re.sub(r"\bMr\.\b", "Mister", s)
     s = re.sub(r"\bMrs\.\b", "Misses", s)
     s = re.sub(r"\bMs\.\b", "Miss", s)
@@ -247,8 +246,8 @@ def _format_text_for_tts(text: str) -> str:
                 remaining = " ".join(words[split_at:]).strip()
                 result.append(chunk)
 
-    # Do not treat sentence-initial "So" as an intro word — adding ", " inserts SSML
-    # comma breaks and causes an audible pause after "So" (e.g. "So bright...", "So I ran.").
+    # Do not treat sentence-initial "So" as an intro word — forcing "So, ..." creates
+    # an unnatural pause (e.g. "So bright...", "So I ran.").
     intro = re.compile(
         r"^(Well|However|First|Then|Now|Yes|Actually|Finally|Suddenly)\s+(?!,)",
         re.I,
@@ -287,34 +286,16 @@ def _format_text_for_tts(text: str) -> str:
     return "\n\n".join(paragraphs)
 
 
-PAUSE_COMMA = '<break time="0.2s" />'
-PAUSE_ELLIPSIS = '<break time="0.5s" />'
-PAUSE_COLON = '<break time="0.2s" />'
-PAUSE_PARAGRAPH = '<break time="0s" />'
+def _prepare_tts_chunk(paragraph: str) -> str:
+    """
+    Return plain narration text for ElevenLabs.
 
-
-def _add_breaks_to_paragraph(paragraph: str, *, add_trailing_paragraph_break: bool = False) -> str:
-    """Add SSML break tags per punctuation."""
-    parts: list[str] = []
-    length = len(paragraph)
-    idx = 0
-    while idx < length:
-        ch = paragraph[idx]
-        if ch == "." and idx + 2 < length and paragraph[idx + 1] == "." and paragraph[idx + 2] == ".":
-            parts.append("...")
-            idx += 3
-            parts.append(f" {PAUSE_ELLIPSIS}")
-            continue
-        parts.append(ch)
-        nxt = paragraph[idx + 1] if idx + 1 < length else ""
-        if ch == ":" and nxt == " ":
-            parts.append(f" {PAUSE_COLON}")
-        elif ch == "," and nxt == " ":
-            parts.append(f" {PAUSE_COMMA}")
-        idx += 1
-    result = "".join(parts)
-    tail = f" {PAUSE_PARAGRAPH}" if add_trailing_paragraph_break else ""
-    return f"<speak>{result}{tail}</speak>"
+    Do not inject SSML <break> tags for commas, colons, or ellipses. Explicit
+    breaks create dead air that cloned voices often fill with breaths/"ahh",
+    which sounds unprofessional. ElevenLabs already pauses naturally from
+    normal punctuation.
+    """
+    return paragraph
 
 
 def _parse_output_format(output_format: str) -> tuple[str, int]:
@@ -649,17 +630,17 @@ async def generate_and_store_story_audio(
 
     try:
         for idx, paragraph in enumerate(paragraphs):
-            ssml_chunk = _add_breaks_to_paragraph(paragraph, add_trailing_paragraph_break=False)
+            tts_chunk = _prepare_tts_chunk(paragraph)
             prev_text = paragraphs[idx - 1] if idx > 0 else None
             next_text = paragraphs[idx + 1] if idx < len(paragraphs) - 1 else None
             started_at = time.perf_counter()
             result = await text_to_speech(
                 voice_id=voice_id,
-                text=ssml_chunk,
+                text=tts_chunk,
                 model_id=model_id,
                 output_format=selected_output_format,
                 voice_settings=request_voice_settings,
-                enable_ssml=True,
+                enable_ssml=False,
                 previous_text=prev_text,
                 next_text=next_text,
                 previous_request_ids=continuity_request_ids[-3:] or None,
